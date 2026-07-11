@@ -27,6 +27,7 @@ import (
 	"github.com/chai2010/webp"
 	"github.com/gabriel-vasile/mimetype"
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"golang.org/x/net/html"
@@ -1732,26 +1733,60 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 
 	for _, v := range data.Buttons {
 		var paramsJSON *string
-
 		var name *string
 
 		switch v.Type {
 		case "reply":
 			name = proto.String("quick_reply")
-			paramsJSON = proto.String(`{"display_text":"` + v.DisplayText + `","id":"` + v.Id + `"}`)
+			b, _ := json.Marshal(map[string]string{"display_text": v.DisplayText, "id": v.Id})
+			paramsJSON = proto.String(string(b))
 		case "copy":
 			name = proto.String("cta_copy")
-			paramsJSON = proto.String(`{"display_text":"` + v.DisplayText + `","copy_code":"` + v.CopyCode + `"}`)
+			b, _ := json.Marshal(map[string]string{"display_text": v.DisplayText, "copy_code": v.CopyCode})
+			paramsJSON = proto.String(string(b))
 		case "url":
 			name = proto.String("cta_url")
-			paramsJSON = proto.String(`{"display_text":"` + v.DisplayText + `","url":"` + v.URL + `","merchant_url":"` + v.URL + `"}`)
+			b, _ := json.Marshal(map[string]string{"display_text": v.DisplayText, "url": v.URL, "merchant_url": v.URL})
+			paramsJSON = proto.String(string(b))
 		case "call":
 			name = proto.String("cta_call")
-			paramsJSON = proto.String(`{"display_text":"` + v.DisplayText + `","phone_number":"` + v.PhoneNumber + `"}`)
+			b, _ := json.Marshal(map[string]string{"display_text": v.DisplayText, "phone_number": v.PhoneNumber})
+			paramsJSON = proto.String(string(b))
 		case "pix":
 			randomId := utils.GenerateRandomString(11)
 			name = proto.String("payment_info")
-			paramsJSON = proto.String(`{"currency":"` + v.Currency + `","total_amount":{"value":0,"offset":100},"reference_id":"` + randomId + `","type":"physical-goods","order":{"status":"pending","subtotal":{"value":0,"offset":100},"order_type":"ORDER","items":[{"name":"","amount":{"value":0,"offset":100},"quantity":0,"sale_amount":{"value":0,"offset":100}}]},"payment_settings":[{"type":"pix_static_code","pix_static_code":{"merchant_name":"` + v.Name + `","key":"` + v.Key + `","key_type":"` + mapKeyType(v.KeyType) + `"}}],"share_payment_status":false}`)
+			pixParams := map[string]interface{}{
+				"currency": v.Currency,
+				"total_amount": map[string]int{"value": 0, "offset": 100},
+				"reference_id": randomId,
+				"type": "physical-goods",
+				"order": map[string]interface{}{
+					"status": "pending",
+					"subtotal": map[string]int{"value": 0, "offset": 100},
+					"order_type": "ORDER",
+					"items": []map[string]interface{}{
+						{
+							"name": "",
+							"amount": map[string]int{"value": 0, "offset": 100},
+							"quantity": 0,
+							"sale_amount": map[string]int{"value": 0, "offset": 100},
+						},
+					},
+				},
+				"payment_settings": []map[string]interface{}{
+					{
+						"type": "pix_static_code",
+						"pix_static_code": map[string]string{
+							"merchant_name": v.Name,
+							"key":           v.Key,
+							"key_type":      mapKeyType(v.KeyType),
+						},
+					},
+				},
+				"share_payment_status": false,
+			}
+			b, _ := json.Marshal(pixParams)
+			paramsJSON = proto.String(string(b))
 		}
 
 		buttons = append(buttons, &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
@@ -1840,7 +1875,21 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 		}
 	}
 
-	response, err := client.SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{ID: messageId})
+	bizNodes := []waBinary.Node{{
+		Tag: "biz",
+		Content: []waBinary.Node{{
+			Tag:   "interactive",
+			Attrs: waBinary.Attrs{"type": "native_flow", "v": "1"},
+			Content: []waBinary.Node{{
+				Tag:   "native_flow",
+				Attrs: waBinary.Attrs{"v": "9", "name": "mixed"},
+			}},
+		}},
+	}}
+	response, err := client.SendMessage(context.Background(), recipient, msg, whatsmeow.SendRequestExtra{
+		ID:              messageId,
+		AdditionalNodes: &bizNodes,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -2332,6 +2381,22 @@ func (s *sendService) SendMessage(instance *instance_model.Instance, msg *waE2E.
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Newsletter detected, using MediaHandle: %s", instance.Id, data.MediaHandle)
 	}
 
+	// InteractiveMessage (carousel, list com NativeFlow) requer biz node para WhatsApp não retornar erro 463
+	if messageType == "InteractiveMessage" {
+		bizNodes := []waBinary.Node{{
+			Tag: "biz",
+			Content: []waBinary.Node{{
+				Tag:   "interactive",
+				Attrs: waBinary.Attrs{"type": "native_flow", "v": "1"},
+				Content: []waBinary.Node{{
+					Tag:   "native_flow",
+					Attrs: waBinary.Attrs{"v": "9", "name": "mixed"},
+				}},
+			}},
+		}}
+		sendExtra.AdditionalNodes = &bizNodes
+	}
+
 	response, err := s.clientPointer[instance.Id].SendMessage(context.Background(), recipient, msg, sendExtra)
 	if err != nil {
 		s.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Error sending message: %v", instance.Id, err)
@@ -2682,12 +2747,8 @@ func (s *sendService) SendCarousel(data *CarouselStruct, instance *instance_mode
 	// Always set ContextInfo (required for iOS)
 	interactiveMsg.ContextInfo = contextInfo
 
-	// Build final message with MessageContextInfo for proper notification delivery
 	msg := &waE2E.Message{
 		InteractiveMessage: interactiveMsg,
-		MessageContextInfo: &waE2E.MessageContextInfo{
-			DeviceListMetadata: &waE2E.DeviceListMetadata{},
-		},
 	}
 
 	message, err := s.SendMessage(instance, msg, "InteractiveMessage", &SendDataStruct{

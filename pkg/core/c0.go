@@ -458,38 +458,16 @@ func InitializeRuntime(_9dg, _ia, _p1wx string) *RuntimeContext {
 	}
 	rc._yt = id
 
-	rd, err := _d8()
-	if err == nil && rd.APIKey != "" {
-		rc._h7dl = rd.APIKey
-		fmt.Printf("  ✓ License found: %s...%s\n", rd.APIKey[:8], rd.APIKey[len(rd.APIKey)-4:])
-
-		rc._e2 = sha256.Sum256([]byte(rc._h7dl + rc._yt))
-		rc._j9.Store(true)
-		ActivateIntegrity(rc)
-		fmt.Println("  ✓ License activated successfully")
-
-		go func() {
-			if err := _jw(rc, _ia); err != nil {
-				fmt.Printf("  ⚠ Remote activation notice failed (non-blocking): %v\n", err)
-			}
-		}()
-	} else if rc._p1wx != "" {
-		rc._h7dl = rc._p1wx
-		if err := _jw(rc, _ia); err == nil {
-			_kgx(&RuntimeData{APIKey: rc._p1wx, Tier: _9dg})
-			rc._e2 = sha256.Sum256([]byte(rc._h7dl + rc._yt))
-			rc._j9.Store(true)
-			ActivateIntegrity(rc)
-			fmt.Printf("  ✓ GLOBAL_API_KEY accepted — license saved and activated\n")
-		} else {
-			rc._h7dl = ""
-			_3tss()
-			rc._j9.Store(false)
-		}
-	} else {
-		_3tss()
-		rc._j9.Store(false)
+	// Always activate locally — no external license server required
+	key := _p1wx
+	if key == "" {
+		key = "evolution-go-local"
 	}
+	rc._h7dl = key
+	rc._e2 = sha256.Sum256([]byte(rc._h7dl + rc._yt))
+	rc._j9.Store(true)
+	ActivateIntegrity(rc)
+	fmt.Println("  ✓ Running in local mode — no license required")
 
 	_693.Store(rc)
 
@@ -567,38 +545,6 @@ func ValidateContext(rc *RuntimeContext) (bool, string) {
 
 func GateMiddleware(rc *RuntimeContext) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		path := c.Request.URL.Path
-
-		if path == "/health" || path == "/server/ok" || path == "/favicon.ico" ||
-			path == "/license/status" || path == "/license/register" || path == "/license/activate" ||
-			strings.HasPrefix(path, "/manager") || strings.HasPrefix(path, "/assets") ||
-			strings.HasPrefix(path, "/swagger") || path == "/ws" ||
-			strings.HasSuffix(path, ".svg") || strings.HasSuffix(path, ".css") ||
-			strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".png") ||
-			strings.HasSuffix(path, ".ico") || strings.HasSuffix(path, ".woff2") ||
-			strings.HasSuffix(path, ".woff") || strings.HasSuffix(path, ".ttf") {
-			c.Next()
-			return
-		}
-
-		valid, _ := ValidateContext(rc)
-		if !valid {
-			scheme := "http"
-			if c.Request.TLS != nil {
-				scheme = "https"
-			}
-			managerURL := fmt.Sprintf("%s://%s/manager/login", scheme, c.Request.Host)
-
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-				"error":        "service not activated",
-				"code":         "LICENSE_REQUIRED",
-				"register_url": managerURL,
-				"message":      "License required. Open the manager to activate your license.",
-			})
-			return
-		}
-
-		c.Set("_rch", rc.ContextHash())
 		c.Next()
 	}
 }
@@ -766,32 +712,11 @@ func LicenseRoutes(eng *gin.Engine, rc *RuntimeContext) {
 }
 
 func StartHeartbeat(ctx context.Context, rc *RuntimeContext, startTime time.Time) {
-	go func() {
-		ticker := time.NewTicker(hbInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if !rc.IsActive() {
-					continue
-				}
-				uptime := int64(time.Since(startTime).Seconds())
-				if err := _ln(rc, uptime); err != nil {
-					fmt.Printf("  ⚠ Heartbeat failed (non-blocking): %v\n", err)
-				}
-			}
-		}
-	}()
+	// no-op: external license heartbeat disabled
 }
 
 func Shutdown(rc *RuntimeContext) {
-	if rc == nil || rc._h7dl == "" {
-		return
-	}
-	_x6qc(rc)
+	// no-op: external license shutdown disabled
 }
 
 func _hl6v(code string) (_h7dl string, err error) {

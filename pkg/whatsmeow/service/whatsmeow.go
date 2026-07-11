@@ -156,31 +156,31 @@ func (w whatsmeowService) ReconnectClient(instanceId string) error {
 	if client, exists := w.clientPointer[instanceId]; exists {
 		w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Disconnecting existing client", instanceId)
 
-		// Desconectar o cliente WebSocket
-		if client.IsConnected() {
-			client.Disconnect()
-			w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] WebSocket disconnected", instanceId)
-		}
-
-		// Remover event handler se existir
+		// Remover event handler ANTES de desconectar para evitar eventos espúrios
 		if mycli, ok := w.myClientPointer[instanceId]; ok {
 			if mycli.eventHandlerID != 0 {
 				client.RemoveEventHandler(mycli.eventHandlerID)
 				w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Event handler removed", instanceId)
 			}
 		}
+
+		// Desconectar o cliente WebSocket
+		if client.IsConnected() {
+			client.Disconnect()
+			w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] WebSocket disconnected", instanceId)
+		}
 	}
 
 	// Passo 2: Limpar todos os recursos da instância
 	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Cleaning up resources", instanceId)
 
-	// Enviar sinal de kill se o canal existir
+	// Enviar sinal de kill para a goroutine StartClient e aguardar entrega
 	if killChan, exists := w.killChannel[instanceId]; exists {
 		select {
 		case killChan <- true:
 			w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Kill signal sent", instanceId)
-		default:
-			// Canal pode estar bloqueado, continua
+		case <-time.After(3 * time.Second):
+			w.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Kill signal timed out, goroutine may have already exited", instanceId)
 		}
 	}
 
@@ -488,23 +488,14 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 				err = client.Connect()
 				if err != nil {
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Falha na segunda tentativa de conexão: %v", cd.Instance.Id, err)
+					_ = w.instanceRepository.UpdateConnected(cd.Instance.Id, false, fmt.Sprintf("Connection failed after retry: %v", err))
 					return
 				}
-			} else if strings.Contains(err.Error(), "username/password authentication failed") {
-				w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] Proxy authentication failed, attempting to connect without proxy", cd.Instance.Id)
-
-				// Desabilita o proxy
-				client.SetProxy(nil)
-
-				// Tenta conectar sem proxy
-				err = client.Connect()
-				if err != nil {
-					w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect even without proxy: %v", cd.Instance.Id, err)
-					return
-				}
-				w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Successfully connected without proxy", cd.Instance.Id)
 			} else {
+				// Qualquer outra falha (incluindo proxy) encerra sem fallback.
+				// Nunca conectamos sem proxy quando um proxy está configurado.
 				w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect: %v", cd.Instance.Id, err)
+				_ = w.instanceRepository.UpdateConnected(cd.Instance.Id, false, fmt.Sprintf("Connection failed: %v", err))
 				return
 			}
 		}
@@ -526,21 +517,12 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 						w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Falha na segunda tentativa de conexão: %v", cd.Instance.Id, err)
 						return
 					}
-				} else if strings.Contains(err.Error(), "username/password authentication failed") {
-					w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] Proxy authentication failed during QR connection, attempting without proxy", cd.Instance.Id)
-
-					// Desabilita o proxy
-					client.SetProxy(nil)
-
-					// Tenta conectar sem proxy
-					err = client.Connect()
-					if err != nil {
-						w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect even without proxy: %v", cd.Instance.Id, err)
-						return
-					}
-					w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Successfully connected without proxy", cd.Instance.Id)
 				} else {
+					// Qualquer falha de proxy (auth, rede, etc.) encerra sem fallback.
+					// Nunca conectamos sem proxy quando um proxy está configurado.
 					w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Failed to connect: %v", cd.Instance.Id, err)
+					// Atualizar status para deixar claro que o proxy falhou
+					_ = w.instanceRepository.UpdateConnected(cd.Instance.Id, false, fmt.Sprintf("Proxy connection failed: %v", err))
 					return
 				}
 			}
@@ -729,11 +711,18 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		}
 	}
 
-	// Removed auto-reconnect logic to prevent infinite loops
+	// Captura o kill channel desta goroutine ANTES do loop para evitar race condition.
+	// Se ReconnectClient substituir a entrada no map, esta goroutine continua usando
+	// o canal original e recebe o sinal corretamente.
+	myKillChan, killChanExists := w.killChannel[cd.Instance.Id]
+	if !killChanExists {
+		w.loggerWrapper.GetLogger(cd.Instance.Id).LogWarn("[%s] Kill channel not found, exiting StartClient", cd.Instance.Id)
+		return
+	}
 
 	for {
 		select {
-		case <-w.killChannel[cd.Instance.Id]:
+		case <-myKillChan:
 			w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("Received kill signal for user '%s'", cd.Instance.Id)
 			client.Disconnect()
 
@@ -783,12 +772,9 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 				go mycli.service.SendToGlobalQueues(postMap["event"].(string), values, mycli.userID)
 			}
 
-			// restart client
-			w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Restarting client", cd.Instance.Id)
-			w.StartClient(cd)
 			return
-		default:
-			time.Sleep(1000 * time.Millisecond)
+		case <-time.After(1 * time.Second):
+			// Continua aguardando sinal de kill
 		}
 	}
 }
@@ -844,6 +830,106 @@ func processPresenceUpdates(mycli *MyClient) {
 	}
 }
 
+// ensureNCTSalt makes sure the account-wide NCT salt is stored. The salt is needed to
+// derive <cstoken> for cold contacts and avoid WhatsApp error 463. It normally arrives in
+// the initial history sync / app-state sync, but instances paired before this feature existed
+// won't get it via incremental sync — so when it's missing we force a one-time full resync of
+// the regular app-state patches (which carry the nct_salt_sync action).
+func (mycli *MyClient) ensureNCTSalt() {
+	client := mycli.WAClient
+	if client == nil || client.Store == nil || client.Store.NCTSalt == nil {
+		return
+	}
+	go func() {
+		ctx := context.Background()
+		salt, err := client.Store.NCTSalt.GetNCTSalt(ctx)
+		if err != nil {
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Failed to read NCT salt: %v", mycli.userID, err)
+			return
+		}
+		if len(salt) > 0 {
+			return
+		}
+		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] NCT salt missing, forcing full app-state resync to fetch it", mycli.userID)
+		for _, name := range appstate.AllPatchNames {
+			if err := client.FetchAppState(ctx, name, true, false); err != nil {
+				mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Full app-state resync of %s failed: %v", mycli.userID, name, err)
+			}
+		}
+		if salt, err := client.Store.NCTSalt.GetNCTSalt(ctx); err == nil && len(salt) > 0 {
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] NCT salt acquired after full resync (%d bytes)", mycli.userID, len(salt))
+		} else {
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] NCT salt still missing after full resync", mycli.userID)
+		}
+	}()
+}
+
+// AccountLimitsCacheEntry holds the last successfully fetched WhatsApp account limits
+// for an instance. The MEX queries can be slow/rate-limited, so they are fetched once on
+// connect and cached here for the /instance/limits endpoint to serve instantly.
+type AccountLimitsCacheEntry struct {
+	ReachoutActive bool
+	ReachoutEnds   int64 // unix seconds
+	ReachoutType   string
+	CappingStatus  string
+	TotalQuota     int
+	UsedQuota      int
+	CycleEnds      int64 // unix seconds
+	FetchedAt      time.Time
+}
+
+var accountLimitsCache sync.Map // instanceID(string) -> *AccountLimitsCacheEntry
+
+// GetCachedAccountLimits returns the last fetched account limits for an instance, if any.
+func GetCachedAccountLimits(instanceID string) (*AccountLimitsCacheEntry, bool) {
+	v, ok := accountLimitsCache.Load(instanceID)
+	if !ok {
+		return nil, false
+	}
+	return v.(*AccountLimitsCacheEntry), true
+}
+
+// logAccountLimits queries WhatsApp's MEX endpoints for the account's new-chat message
+// capping and reachout timelock state, logs them, and caches the result. Error 463 on sends
+// to NEW contacts is caused by these account-level limits, not by local code.
+func (mycli *MyClient) logAccountLimits() {
+	client := mycli.WAClient
+	if client == nil {
+		return
+	}
+	go func() {
+		ctx := context.Background()
+		entry := &AccountLimitsCacheEntry{FetchedAt: time.Now()}
+		got := false
+		if capInfo, err := client.GetNewChatMessageCappingInfo(ctx); err != nil {
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Failed to fetch new-chat message capping info: %v", mycli.userID, err)
+		} else if capInfo != nil {
+			entry.CappingStatus = string(capInfo.CappingStatus)
+			entry.TotalQuota = capInfo.TotalQuota
+			entry.UsedQuota = capInfo.UsedQuota
+			entry.CycleEnds = capInfo.CycleEndTimestamp.Unix()
+			got = true
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] NEW-CHAT CAPPING: status=%s used=%d/%d cycleEnds=%s ote=%s mv=%s",
+				mycli.userID, capInfo.CappingStatus, capInfo.UsedQuota, capInfo.TotalQuota, capInfo.CycleEndTimestamp.Time, capInfo.OTEStatus, capInfo.MVStatus)
+		}
+		if tl, err := client.GetAccountReachoutTimelock(ctx); err != nil {
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Failed to fetch reachout timelock: %v", mycli.userID, err)
+		} else if tl != nil {
+			entry.ReachoutActive = tl.IsActive
+			if tl.IsActive {
+				entry.ReachoutEnds = tl.TimeEnforcementEnds.Unix()
+			}
+			entry.ReachoutType = string(tl.EnforcementType)
+			got = true
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] REACHOUT TIMELOCK: active=%t ends=%s type=%s",
+				mycli.userID, tl.IsActive, tl.TimeEnforcementEnds.Time, tl.EnforcementType)
+		}
+		if got {
+			accountLimitsCache.Store(mycli.userID, entry)
+		}
+	}()
+}
+
 func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	userID := mycli.userID
 	postMap := make(map[string]interface{})
@@ -862,6 +948,15 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 		}
 	case *events.Connected, *events.PushNameSetting:
 		mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] events.Connected to Whatsapp for user '%s'", mycli.userID, mycli.WAClient.Store.PushName)
+		// Self-heal: ensure the account-wide NCT salt is present so <cstoken> can be
+		// derived for cold contacts (fixes error 463). Already-paired instances won't
+		// receive it via incremental app-state sync, so force a one-time full resync
+		// of the regular patches when it's missing.
+		mycli.ensureNCTSalt()
+		// Diagnostic: log WhatsApp's own account limits (new-chat quota + reachout
+		// timelock). When these are exhausted/active, sends to NEW contacts get 463
+		// regardless of tokens — this surfaces exactly why and until when.
+		mycli.logAccountLimits()
 		if len(mycli.WAClient.Store.PushName) > 0 {
 			doWebhook = true
 			postMap["event"] = "Connected"
@@ -2170,13 +2265,22 @@ func (w *whatsmeowService) sendToQueueOrWebhook(instance *instance_model.Instanc
 		w.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Message sent to websocket successfully", instance.Id)
 	}
 
+	allWebhooks := make([]string, 0)
 	if instance.Webhook != "" && instance.Webhook != "disabled" {
-		err := w.webhookProducer.Produce(queueName, jsonData, instance.Webhook, instance.Id)
-		if err != nil {
-			w.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to send message to webhook: %s", instance.Id, err)
-			return
+		allWebhooks = append(allWebhooks, instance.Webhook)
+	}
+	for _, wh := range instance.Webhooks {
+		if wh != "" && wh != "disabled" {
+			allWebhooks = append(allWebhooks, wh)
 		}
-		w.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Message sent to webhook successfully", instance.Id)
+	}
+	for _, webhookURL := range allWebhooks {
+		err := w.webhookProducer.Produce(queueName, jsonData, webhookURL, instance.Id)
+		if err != nil {
+			w.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to send message to webhook %s: %s", instance.Id, webhookURL, err)
+		} else {
+			w.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Message sent to webhook %s successfully", instance.Id, webhookURL)
+		}
 	}
 }
 

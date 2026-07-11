@@ -1,14 +1,18 @@
 package telemetry
 
 import (
-	"bytes"
-	"encoding/json"
-	"log"
-	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// NOTE (fork change): telemetry has been disabled in this fork.
+//
+// Upstream POSTed the accessed route of every request to an external endpoint
+// (https://log.evolution-api.com/telemetry). To guarantee there is no outbound
+// "phone-home" from a self-hosted instance, all functions below are no-ops.
+// The public API (types, middleware, constructor) is preserved unchanged so
+// existing callers keep compiling and behaving normally.
 
 type TelemetryData struct {
 	Route      string    `json:"route"`
@@ -20,8 +24,6 @@ type telemetryService struct{}
 
 func (t *telemetryService) TelemetryMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		route := c.FullPath()
-		go SendTelemetry(route)
 		c.Next()
 	}
 }
@@ -30,32 +32,8 @@ type TelemetryService interface {
 	TelemetryMiddleware() gin.HandlerFunc
 }
 
-func SendTelemetry(route string) {
-	if route == "/" {
-		return
-	}
-
-	telemetry := TelemetryData{
-		Route:      route,
-		APIVersion: "evo-go",
-		Timestamp:  time.Now(),
-	}
-
-	url := "https://log.evolution-api.com/telemetry"
-
-	data, err := json.Marshal(telemetry)
-	if err != nil {
-		log.Println("Erro ao serializar telemetria:", err)
-		return
-	}
-
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(data))
-	if err != nil {
-		log.Println("Erro ao enviar telemetria:", err)
-		return
-	}
-	defer resp.Body.Close()
-}
+// SendTelemetry is intentionally a no-op: no data leaves the instance.
+func SendTelemetry(route string) {}
 
 func NewTelemetryService() TelemetryService {
 	return &telemetryService{}

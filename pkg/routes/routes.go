@@ -89,6 +89,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.DELETE("/proxy/:instanceId", r.instanceHandler.DeleteProxy)
 			routes.POST("/forcereconnect/:instanceId", r.instanceHandler.ForceReconnect)
 			routes.GET("/logs/:instanceId", r.instanceHandler.GetLogs)
+			routes.GET("/limits/:instanceId", r.instanceHandler.Limits)
 		}
 	}
 
@@ -105,6 +106,9 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.DELETE("/logout", r.instanceHandler.Logout)
 			routes.GET("/:instanceId/advanced-settings", r.instanceHandler.GetAdvancedSettings)
 			routes.PUT("/:instanceId/advanced-settings", r.instanceHandler.UpdateAdvancedSettings)
+			routes.GET("/webhooks/:instanceId", r.instanceHandler.ListWebhooks)
+			routes.POST("/webhooks/:instanceId", r.instanceHandler.AddWebhook)
+			routes.DELETE("/webhooks/:instanceId", r.instanceHandler.RemoveWebhook)
 		}
 	}
 

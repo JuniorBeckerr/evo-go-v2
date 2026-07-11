@@ -31,6 +31,7 @@ type InstanceService interface {
 	Disconnect(instance *instance_model.Instance) (*instance_model.Instance, error)
 	Logout(instance *instance_model.Instance) (*instance_model.Instance, error)
 	Status(instance *instance_model.Instance) (*StatusStruct, error)
+	GetLimits(instanceId string) (*LimitsStruct, error)
 	GetQr(instance *instance_model.Instance) (*QrcodeStruct, error)
 	Pair(data *PairStruct, instance *instance_model.Instance) (*PairReturnStruct, error)
 	GetAll() ([]*instance_model.Instance, error)
@@ -44,6 +45,9 @@ type InstanceService interface {
 	GetLogs(instanceId string, startDate, endDate time.Time, level string, limit int) ([]logger_wrapper.LogEntry, error)
 	GetAdvancedSettings(instanceId string) (*instance_model.AdvancedSettings, error)
 	UpdateAdvancedSettings(instanceId string, settings *instance_model.AdvancedSettings) error
+	AddWebhook(instanceId string, url string) (*instance_model.Instance, error)
+	RemoveWebhook(instanceId string, url string) (*instance_model.Instance, error)
+	ListWebhooks(instanceId string) ([]string, error)
 }
 
 type instances struct {
@@ -86,6 +90,28 @@ type StatusStruct struct {
 	LoggedIn  bool
 	myJid     *types.JID
 	Name      string
+}
+
+// ReachoutTimelockStruct describes WhatsApp's reachout timelock for the account
+// (when active, companion devices/the API cannot start chats with NEW contacts → error 463).
+type ReachoutTimelockStruct struct {
+	IsActive            bool   `json:"isActive"`
+	TimeEnforcementEnds int64  `json:"timeEnforcementEnds"` // unix seconds; 0 when not active
+	EnforcementType     string `json:"enforcementType"`
+}
+
+// NewChatCappingStruct describes the account's new-chat messaging quota for the current cycle.
+type NewChatCappingStruct struct {
+	CappingStatus string `json:"cappingStatus"`
+	TotalQuota    int    `json:"totalQuota"`
+	UsedQuota     int    `json:"usedQuota"`
+	CycleEnds     int64  `json:"cycleEnds"` // unix seconds
+}
+
+// LimitsStruct aggregates WhatsApp's account-level messaging limits for an instance.
+type LimitsStruct struct {
+	ReachoutTimelock *ReachoutTimelockStruct `json:"reachoutTimelock"`
+	NewChatCapping   *NewChatCappingStruct   `json:"newChatCapping"`
 }
 
 type QrcodeStruct struct {
@@ -401,6 +427,67 @@ func (i instances) Status(instance *instance_model.Instance) (*StatusStruct, err
 	return status, nil
 }
 
+// GetLimits returns WhatsApp's reachout timelock and new-chat messaging quota for an
+// instance — the account-level limits behind error 463. It serves the value cached on
+// connect (the MEX queries are slow/rate-limited); on a cache miss it does a live query
+// with a short timeout so the HTTP request never hangs.
+func (i instances) GetLimits(instanceId string) (*LimitsStruct, error) {
+	if e, ok := whatsmeow_service.GetCachedAccountLimits(instanceId); ok {
+		result := &LimitsStruct{
+			ReachoutTimelock: &ReachoutTimelockStruct{
+				IsActive:            e.ReachoutActive,
+				TimeEnforcementEnds: e.ReachoutEnds,
+				EnforcementType:     e.ReachoutType,
+			},
+		}
+		if e.CappingStatus != "" {
+			result.NewChatCapping = &NewChatCappingStruct{
+				CappingStatus: e.CappingStatus,
+				TotalQuota:    e.TotalQuota,
+				UsedQuota:     e.UsedQuota,
+				CycleEnds:     e.CycleEnds,
+			}
+		}
+		return result, nil
+	}
+
+	client, err := i.ensureClientConnected(instanceId)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	result := &LimitsStruct{}
+
+	if tl, err := client.GetAccountReachoutTimelock(ctx); err != nil {
+		i.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to fetch reachout timelock: %v", instanceId, err)
+	} else if tl != nil {
+		var ends int64
+		if tl.IsActive {
+			ends = tl.TimeEnforcementEnds.Unix()
+		}
+		result.ReachoutTimelock = &ReachoutTimelockStruct{
+			IsActive:            tl.IsActive,
+			TimeEnforcementEnds: ends,
+			EnforcementType:     string(tl.EnforcementType),
+		}
+	}
+
+	if capping, err := client.GetNewChatMessageCappingInfo(ctx); err != nil {
+		i.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to fetch new-chat capping info: %v", instanceId, err)
+	} else if capping != nil {
+		result.NewChatCapping = &NewChatCappingStruct{
+			CappingStatus: string(capping.CappingStatus),
+			TotalQuota:    capping.TotalQuota,
+			UsedQuota:     capping.UsedQuota,
+			CycleEnds:     capping.CycleEndTimestamp.Unix(),
+		}
+	}
+
+	return result, nil
+}
+
 func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, error) {
 	logger := i.loggerWrapper.GetLogger(instance.Id)
 	client := i.clientPointer[instance.Id]
@@ -589,8 +676,13 @@ func (i instances) SetProxy(id string, proxyConfig *ProxyConfig) error {
 
 	i.loggerWrapper.GetLogger(id).LogInfo("[%s] Proxy configuration updated: %s://%s:%s", id, proxyConfig.Protocol, proxyConfig.Host, proxyConfig.Port)
 
-	// Reconnect to apply proxy changes
-	go i.Reconnect(instance)
+	// Reiniciar o cliente para aplicar as mudanças de proxy.
+	// Usa ReconnectClient diretamente pois funciona mesmo quando a instância está desconectada.
+	go func() {
+		if err := i.whatsmeowService.ReconnectClient(id); err != nil {
+			i.loggerWrapper.GetLogger(id).LogError("[%s] Failed to reconnect after proxy change: %v", id, err)
+		}
+	}()
 
 	return nil
 }
@@ -626,7 +718,11 @@ func (i instances) RemoveProxy(id string) error {
 
 	i.loggerWrapper.GetLogger(id).LogInfo("[%s] Proxy configuration removed", id)
 
-	go i.Reconnect(instance)
+	go func() {
+		if err := i.whatsmeowService.ReconnectClient(id); err != nil {
+			i.loggerWrapper.GetLogger(id).LogError("[%s] Failed to reconnect after proxy removal: %v", id, err)
+		}
+	}()
 
 	return nil
 }
@@ -843,6 +939,54 @@ func (i instances) UpdateAdvancedSettings(instanceId string, settings *instance_
 
 	i.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Advanced settings updated successfully", instanceId)
 	return nil
+}
+
+func (i instances) AddWebhook(instanceId string, url string) (*instance_model.Instance, error) {
+	instance, err := i.instanceRepository.GetInstanceByID(instanceId)
+	if err != nil {
+		return nil, err
+	}
+	for _, existing := range instance.Webhooks {
+		if existing == url {
+			return instance, nil
+		}
+	}
+	instance.Webhooks = append(instance.Webhooks, url)
+	if err := i.instanceRepository.Update(instance); err != nil {
+		return nil, err
+	}
+	return instance, nil
+}
+
+func (i instances) RemoveWebhook(instanceId string, url string) (*instance_model.Instance, error) {
+	instance, err := i.instanceRepository.GetInstanceByID(instanceId)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]string, 0, len(instance.Webhooks))
+	for _, existing := range instance.Webhooks {
+		if existing != url {
+			filtered = append(filtered, existing)
+		}
+	}
+	instance.Webhooks = filtered
+	if err := i.instanceRepository.Update(instance); err != nil {
+		return nil, err
+	}
+	return instance, nil
+}
+
+func (i instances) ListWebhooks(instanceId string) ([]string, error) {
+	instance, err := i.instanceRepository.GetInstanceByID(instanceId)
+	if err != nil {
+		return nil, err
+	}
+	all := make([]string, 0)
+	if instance.Webhook != "" && instance.Webhook != "disabled" {
+		all = append(all, instance.Webhook)
+	}
+	all = append(all, instance.Webhooks...)
+	return all, nil
 }
 
 func NewInstanceService(
