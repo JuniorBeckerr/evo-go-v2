@@ -17,19 +17,32 @@
 
 ## 🔀 Sobre este fork
 
-Fork do [NathanAshford/evolution-go-custom](https://github.com/NathanAshford/evolution-go-custom)
-com correções que fazem o projeto **compilar e instalar do zero** e consertam bugs de envio:
+Distribuicao customizada do [evolution-foundation/evolution-go](https://github.com/evolution-foundation/evolution-go) (base **v0.7.1**), com mensagens
+interativas que renderizam em todas as plataformas, instalador 1-clique e correcoes de envio:
 
-- **Build restaurado** — o repositório original foi publicado sem `cmd/evolution-go/` e `pkg/server/`
-  (os padrões `evolution-go` e `server` do `.gitignore` engoliram as pastas), então o
-  `docker build` falhava em qualquer clone limpo. Os arquivos foram restaurados a partir do
-  upstream oficial (com os imports ajustados) e o `.gitignore` foi ancorado na raiz.
+- **Build 100% reproduzivel** — `cmd/evolution-go/` e `pkg/server/` versionados e `.gitignore`
+  ancorado na raiz, de modo que `docker build` funciona a partir de qualquer clone limpo.
 - **Título duplicado no `/send/button`** — o título ia no cabeçalho da mensagem interativa
   **e** repetido em negrito no corpo; no WhatsApp Web/Desktop aparecia duas vezes.
   Agora vai só no cabeçalho.
 - **`/group/myall` sempre vazio** — o filtro de "grupos que sou dono" quebrava o JID do
   usuário (split em `"."` em vez do sufixo de device) e não considerava donos no formato
   LID (`OwnerPN`). Corrigido.
+
+### Atualizando com o projeto oficial
+
+O histórico deste repositório é baseado no [evolution-foundation/evolution-go](https://github.com/evolution-foundation/evolution-go)
+(base: v0.7.1), então dá para trazer novidades do oficial com um merge de verdade:
+
+```bash
+git remote add upstream https://github.com/evolution-foundation/evolution-go.git  # uma vez só
+git fetch upstream --tags
+git merge upstream/main   # resolva conflitos, se houver, e teste antes de publicar
+```
+
+> Atenção: as alterações custom mexem bastante em `pkg/sendMessage`, `pkg/instance` e na
+> `whatsmeow-lib/` vendorizada — nos merges, em caso de conflito nessas áreas, prefira a
+> versão deste fork e reaplique a mudança do oficial por cima com cuidado.
 
 ---
 
