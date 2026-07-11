@@ -1,5 +1,20 @@
 # Evolution GO - Changelog
 
+## Fork (2026-07-11)
+
+### 🔧 Fixes
+- **Build a partir de clone limpo restaurado** — `cmd/evolution-go/main.go` e `pkg/server/handler/`
+  voltaram ao repositório (haviam sido excluídos acidentalmente pelos padrões `evolution-go` e
+  `server` do `.gitignore`, que agora estão ancorados na raiz como `/evolution-go` e `/server`).
+  O `main.go` veio do upstream `evolution-foundation/evolution-go` com imports ajustados para o
+  módulo deste fork e sem as rotas de passkey (inexistentes aqui).
+- **`/send/button`: título duplicado** — o título era repetido em negrito no corpo além do
+  cabeçalho da `InteractiveMessage`; agora aparece uma única vez (corpo recebe o título somente
+  quando a descrição está vazia).
+- **`/group/myall`: retornava sempre vazio** — a identificação do dono do grupo quebrava o JID do
+  usuário (`strings.Split(jid, ".")`) e ignorava donos em formato LID; a comparação agora usa
+  `Store.ID.ToNonAD().User` contra `OwnerJID` e `OwnerPN`.
+
 ## v0.7.1
 
 **Docker:** `evoapicloud/evolution-go:0.7.1`

@@ -15,12 +15,30 @@
 
 ---
 
+## 🔀 Sobre este fork
+
+Fork do [NathanAshford/evolution-go-custom](https://github.com/NathanAshford/evolution-go-custom)
+com correções que fazem o projeto **compilar e instalar do zero** e consertam bugs de envio:
+
+- **Build restaurado** — o repositório original foi publicado sem `cmd/evolution-go/` e `pkg/server/`
+  (os padrões `evolution-go` e `server` do `.gitignore` engoliram as pastas), então o
+  `docker build` falhava em qualquer clone limpo. Os arquivos foram restaurados a partir do
+  upstream oficial (com os imports ajustados) e o `.gitignore` foi ancorado na raiz.
+- **Título duplicado no `/send/button`** — o título ia no cabeçalho da mensagem interativa
+  **e** repetido em negrito no corpo; no WhatsApp Web/Desktop aparecia duas vezes.
+  Agora vai só no cabeçalho.
+- **`/group/myall` sempre vazio** — o filtro de "grupos que sou dono" quebrava o JID do
+  usuário (split em `"."` em vez do sufixo de device) e não considerava donos no formato
+  LID (`OwnerPN`). Corrigido.
+
+---
+
 ## ⚡ Instale em um comando
 
 Em um **Ubuntu Server / VPS** novo (como root):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NathanAshford/evolution-go-custom/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-custom/main/install.sh | sudo bash
 ```
 
 Só isso. O instalador configura o Docker, compila a aplicação a partir do código-fonte,
@@ -197,7 +215,7 @@ ambiente (`PROXY_PROTOCOL`, `PROXY_HOST`, `PROXY_PORT`, `PROXY_USERNAME`, `PROXY
 ### Um comando (recomendado)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NathanAshford/evolution-go-custom/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-custom/main/install.sh | sudo bash
 ```
 
 O instalador é **100% autônomo** — você roda e já sai usando. Ele:
@@ -216,7 +234,7 @@ Coloque variáveis de ambiente antes do comando para personalizar:
 
 ```bash
 # Porta customizada + firewall automático (UFW: libera SSH e a porta da app)
-curl -fsSL https://raw.githubusercontent.com/NathanAshford/evolution-go-custom/main/install.sh \
+curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-custom/main/install.sh \
   | sudo APP_PORT=4000 SETUP_UFW=1 bash
 ```
 
@@ -232,7 +250,7 @@ curl -fsSL https://raw.githubusercontent.com/NathanAshford/evolution-go-custom/m
 ### Instalação manual (inspecionar antes)
 
 ```bash
-git clone https://github.com/NathanAshford/evolution-go-custom.git
+git clone https://github.com/JuniorBeckerr/evo-go-custom.git
 cd evolution-go-custom
 sudo ./install.sh
 ```

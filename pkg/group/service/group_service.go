@@ -419,18 +419,13 @@ func (g *groupService) GetMyGroups(instance *instance_model.Instance) ([]types.G
 		return nil, err
 	}
 
-	var jid string = client.Store.ID.String()
-	var jidClear = strings.Split(jid, ".")[0]
-	jidOfAdmin, ok := utils.ParseJID(jidClear)
-	if !ok {
-		g.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Error validating message fields", instance.Id)
-		return nil, errors.New("invalid phone number")
-	}
+	// Compare by bare user id: Store.ID carries a device suffix (":NN"), and in
+	// LID-era groups the owner may appear as OwnerJID (@lid) or OwnerPN (@s.whatsapp.net).
+	selfUser := client.Store.ID.ToNonAD().User
 	var adminGroups []types.GroupInfo
 	for _, group := range resp {
-		if group.OwnerJID == jidOfAdmin {
+		if group.OwnerJID.User == selfUser || group.OwnerPN.User == selfUser {
 			adminGroups = append(adminGroups, *group)
-			_ = adminGroups
 		}
 	}
 

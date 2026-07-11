@@ -1813,13 +1813,12 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 			},
 		}
 	} else {
-		body := func() string {
-			t := "*" + data.Title + "*"
-			if data.Description != "" {
-				t += "\n\n" + data.Description + "\n"
-			}
-			return t
-		}()
+		// Title goes only in the Header below — repeating it in the body made it
+		// render twice on platforms that show both (e.g. WhatsApp Web).
+		body := data.Description
+		if data.Title != "" && data.Description == "" {
+			body = "*" + data.Title + "*"
+		}
 
 		interactiveMsg := &waE2E.InteractiveMessage{
 			Body: &waE2E.InteractiveMessage_Body{
