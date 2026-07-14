@@ -212,6 +212,9 @@ type ButtonStruct struct {
 	Description  string       `json:"description" example:"Confira as condicoes abaixo"`
 	// Footer text (required).
 	Footer       string       `json:"footer" example:"Evolution GO"`
+	// Optional header image URL. When set, the message shows the image on top
+	// (with the buttons below), like a single carousel card. Renders on WhatsApp Web.
+	ImageUrl     string       `json:"imageUrl,omitempty" example:"https://picsum.photos/seed/promo/600/400"`
 	// Buttons array. See combination rules on the parent type description.
 	Buttons      []Button     `json:"buttons"`
 	// Typing delay (milliseconds) applied before sending the message.
@@ -1841,12 +1844,63 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 			}
 		}
 
-		// Header with title
-		if data.Title != "" {
-			interactiveMsg.Header = &waE2E.InteractiveMessage_Header{
-				Title:              proto.String(data.Title),
+		// Header: titulo e/ou imagem no topo. Com imageUrl, faz upload e anexa a
+		// midia (imagem + botoes) numa InteractiveMessage unica -> renderiza no Web.
+		if data.Title != "" || data.ImageUrl != "" {
+			header := &waE2E.InteractiveMessage_Header{
 				HasMediaAttachment: proto.Bool(false),
 			}
+			if data.Title != "" {
+				header.Title = proto.String(data.Title)
+			}
+			if data.ImageUrl != "" {
+				resp, err := http.Get(data.ImageUrl)
+				if err == nil {
+					defer resp.Body.Close()
+					fileData, err := io.ReadAll(resp.Body)
+					if err == nil {
+						uploaded, err := client.Upload(context.Background(), fileData, whatsmeow.MediaImage)
+						if err == nil {
+							var jpegThumb []byte
+							img, _, decErr := image.Decode(bytes.NewReader(fileData))
+							if decErr == nil {
+								bounds := img.Bounds()
+								thumbWidth := 72
+								thumbHeight := int(float64(bounds.Dy()) * float64(thumbWidth) / float64(bounds.Dx()))
+								if thumbHeight < 1 {
+									thumbHeight = 1
+								}
+								thumbImg := image.NewRGBA(image.Rect(0, 0, thumbWidth, thumbHeight))
+								for y := 0; y < thumbHeight; y++ {
+									for x := 0; x < thumbWidth; x++ {
+										srcX := x * bounds.Dx() / thumbWidth
+										srcY := y * bounds.Dy() / thumbHeight
+										thumbImg.Set(x, y, img.At(srcX+bounds.Min.X, srcY+bounds.Min.Y))
+									}
+								}
+								var thumbBuf bytes.Buffer
+								if jpeg.Encode(&thumbBuf, thumbImg, &jpeg.Options{Quality: 50}) == nil {
+									jpegThumb = thumbBuf.Bytes()
+								}
+							}
+							header.HasMediaAttachment = proto.Bool(true)
+							header.Media = &waE2E.InteractiveMessage_Header_ImageMessage{
+								ImageMessage: &waE2E.ImageMessage{
+									URL:           proto.String(uploaded.URL),
+									DirectPath:    proto.String(uploaded.DirectPath),
+									MediaKey:      uploaded.MediaKey,
+									Mimetype:      proto.String("image/jpeg"),
+									FileEncSHA256: uploaded.FileEncSHA256,
+									FileSHA256:    uploaded.FileSHA256,
+									FileLength:    proto.Uint64(uint64(len(fileData))),
+									JPEGThumbnail: jpegThumb,
+								},
+							}
+						}
+					}
+				}
+			}
+			interactiveMsg.Header = header
 		}
 
 		msg = &waE2E.Message{
