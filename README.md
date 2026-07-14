@@ -166,29 +166,39 @@ máxima compatibilidade):
 
 ### Carrossel — `POST /send/carousel`
 
-Cards deslizáveis, cada um com mídia, texto e botões próprios:
+Cards deslizáveis (mínimo 1), cada um com sua própria **imagem**, **título**, **descrição**
+e **botão**. Por card: `header` (`imageUrl` ou `videoUrl`, `title`, `subtitle`), `body.text`
+(obrigatório), `footer` (opcional) e `buttons` (opcional).
 
 ```jsonc
 {
   "number": "5582988898565",
-  "body": "Confira nossas novidades!",
-  "footer": "Sua Empresa",
+  "body": "Confira nossas novidades!",   // opcional — texto acima dos cards
+  "footer": "Sua Empresa",               // opcional
   "cards": [
     {
       "header": { "imageUrl": "https://picsum.photos/seed/card1/600/400", "title": "Oferta do dia" },
-      "body":   { "text": "Card 1 — oferta especial" },
-      "footer": "Por tempo limitado",
+      "body":   { "text": "Descrição do primeiro card" },
       "buttons": [
-        { "type": "URL",   "displayText": "Comprar",   "id": "https://exemplo.com/produto1" },
-        { "type": "REPLY", "displayText": "Mais infos", "id": "card1_info" }
+        { "type": "REPLY", "displayText": "Quero saber mais", "id": "card1_info" }
+      ]
+    },
+    {
+      "header": { "imageUrl": "https://picsum.photos/seed/card2/600/400", "title": "Novidade" },
+      "body":   { "text": "Descrição do segundo card" },
+      "buttons": [
+        { "type": "URL", "displayText": "Abrir site", "id": "https://exemplo.com" }
       ]
     }
   ]
 }
 ```
 
-> Nos cards do carrossel, os botões `url`/`call` levam o destino no campo `id`
-> (não há campos `url`/`phoneNumber` separados). Pix não está disponível dentro dos cards.
+> **Os botões do carrossel são diferentes dos de `/send/button`**: não há campos `url`/`phoneNumber`
+> separados — o destino vai sempre no `id` (`URL` → link, `CALL` → telefone), `COPY` usa `copyCode`
+> e `REPLY` usa o `id` como payload. Assim como em `/send/button`, **evite misturar `REPLY` com botões
+> de ação (`URL`/`CALL`/`COPY`) no mesmo card** — no WhatsApp Web o card não renderiza; prefira um card
+> só-`REPLY` *ou* só-ação. `PIX` não é suportado dentro de cards (use `/send/button`).
 
 ---
 
