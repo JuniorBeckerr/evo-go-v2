@@ -13,7 +13,7 @@
 #    7. Espera ficar saudavel e imprime a URL do Manager + sua API key
 #
 #  Uso (recomendado):
-#    curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-custom/main/install.sh | sudo bash
+#    curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-v2/main/install.sh | sudo bash
 #
 #  Variaveis opcionais (env):
 #    APP_PORT=4000        Porta da API/Manager                     (padrao 8080)
@@ -29,8 +29,8 @@
 set -Eeuo pipefail
 
 # ---- Configuracao -----------------------------------------------------------
-REPO_URL="${REPO_URL:-https://github.com/JuniorBeckerr/evo-go-custom.git}"
-EVO_BRANCH="${EVO_BRANCH:-main}"
+REPO_URL="${REPO_URL:-https://github.com/JuniorBeckerr/evo-go-v2.git}"
+EVO_BRANCH="${EVO_BRANCH:-custom-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/evolution-go}"
 APP_PORT="${APP_PORT:-8080}"
 SETUP_UFW="${SETUP_UFW:-0}"

@@ -51,7 +51,7 @@ git merge upstream/main   # resolva conflitos, se houver, e teste antes de publi
 Em um **Ubuntu Server / VPS** novo (como root):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-custom/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-v2/main/install.sh | sudo bash
 ```
 
 Só isso. O instalador configura o Docker, compila a aplicação a partir do código-fonte,
@@ -228,7 +228,7 @@ ambiente (`PROXY_PROTOCOL`, `PROXY_HOST`, `PROXY_PORT`, `PROXY_USERNAME`, `PROXY
 ### Um comando (recomendado)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-custom/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-v2/main/install.sh | sudo bash
 ```
 
 O instalador é **100% autônomo** — você roda e já sai usando. Ele:
@@ -247,7 +247,7 @@ Coloque variáveis de ambiente antes do comando para personalizar:
 
 ```bash
 # Porta customizada + firewall automático (UFW: libera SSH e a porta da app)
-curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-custom/main/install.sh \
+curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-v2/main/install.sh \
   | sudo APP_PORT=4000 SETUP_UFW=1 bash
 ```
 
@@ -263,8 +263,8 @@ curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-custom/main/in
 ### Instalação manual (inspecionar antes)
 
 ```bash
-git clone https://github.com/JuniorBeckerr/evo-go-custom.git
-cd evolution-go-custom
+git clone https://github.com/JuniorBeckerr/evo-go-v2.git
+cd evo-go-v2
 sudo ./install.sh
 ```
 
