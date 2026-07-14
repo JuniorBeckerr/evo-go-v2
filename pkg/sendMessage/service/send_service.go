@@ -717,7 +717,7 @@ func (s *sendService) sendLinkWithRetry(data *LinkStruct, instance *instance_mod
 
 		matchedText := findURL(data.Text)
 
-		if matchedText != "" {
+		if matchedText != "" && data.ImgUrl == "" {
 			title, description, imgUrl, err := fetchLinkMetadata(matchedText)
 			if err != nil {
 				if attempt == maxRetries {
