@@ -92,10 +92,6 @@ Sem Coolify, sem painel de controle, sem contas externas. [Detalhes abaixo.](#-i
 É o que diferencia o Evolution GO Custom. Toda requisição é autenticada com o header
 `apikey`. Conecte uma instância primeiro (`/instance/create` → `/instance/qr`) e depois:
 
-> 📖 **Vai integrar em outro projeto?** Veja o **[Guia de uso da API](docs/GUIA-API.md)** —
-> autenticação (chave global × token de instância), ciclo da instância, envio e webhooks,
-> tudo com exemplos em `curl`.
-
 ### Botões — `POST /send/button`
 
 **Botões de resposta** (até 3):
