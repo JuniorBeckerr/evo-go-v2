@@ -1819,8 +1819,16 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 		// Title goes only in the Header below — repeating it in the body made it
 		// render twice on platforms that show both (e.g. WhatsApp Web).
 		body := data.Description
-		if data.Title != "" && data.Description == "" {
-			body = "*" + data.Title + "*"
+		if data.Title != "" {
+			if data.ImageUrl != "" {
+				if data.Description != "" {
+					body = "*" + data.Title + "*\n\n" + data.Description
+				} else {
+					body = "*" + data.Title + "*"
+				}
+			} else if data.Description == "" {
+				body = "*" + data.Title + "*"
+			}
 		}
 
 		interactiveMsg := &waE2E.InteractiveMessage{
@@ -1850,7 +1858,7 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 			header := &waE2E.InteractiveMessage_Header{
 				HasMediaAttachment: proto.Bool(false),
 			}
-			if data.Title != "" {
+			if data.Title != "" && data.ImageUrl == "" {
 				header.Title = proto.String(data.Title)
 			}
 			if data.ImageUrl != "" {
