@@ -67,6 +67,9 @@ Sem Coolify, sem painel de controle, sem contas externas. [Detalhes abaixo.](#-i
 - 🔘 **Tipos de botão ricos** — `reply`, `url`, `call`, `copy` **e o botão nativo `pix`** de pagamento.
 - 🎠 **Endpoint de carrossel** — envie cards deslizáveis (imagem/vídeo + texto + botões),
   com geração automática de thumbnail para carregamento instantâneo da imagem.
+- 🖼️ **Foto + botão e preview de link customizável** — `/send/button` aceita `imageUrl` (imagem
+  no topo **com** botões, renderiza no WhatsApp Web); `/send/link` aceita imagem, título e descrição
+  próprios (sem depender do `og:` da página) e `largePreview` para imagem **grande e clicável**.
 - 🩹 **Erro 463 do WhatsApp resolvido** — o tratamento dos tokens NativeFlow
   (`tctoken`/`cstoken`) que fazia botões/carrosséis falharem foi corrigido, então os
   envios interativos chegam de forma confiável.
@@ -136,6 +139,26 @@ Sem Coolify, sem painel de controle, sem contas externas. [Detalhes abaixo.](#-i
 }
 ```
 
+**Botão com imagem no topo** (foto + botões — renderiza no WhatsApp Web):
+
+```jsonc
+{
+  "number": "5582988898565",
+  "title": "Oferta do dia",
+  "description": "Confira as condições",
+  "footer": "Sua Loja",
+  "imageUrl": "https://picsum.photos/seed/promo/600/400",
+  "buttons": [
+    { "type": "url", "displayText": "Comprar", "url": "https://exemplo.com" }
+  ]
+}
+```
+
+> Com `imageUrl`, a imagem vai no cabeçalho e o **título é movido para o início do corpo em
+> negrito** — o WhatsApp não exibe título de texto junto com mídia no cabeçalho. A imagem abre
+> em tela cheia ao tocar (não é link); quem leva ao link é o botão. Para uma **imagem clicável**
+> que abre o link, use `POST /send/link` (abaixo).
+
 > **Regras dos botões** (validadas pela API): até **3 botões `reply`**; `reply` não pode
 > ser misturado com outros tipos; um botão `pix` deve ser o único da mensagem.
 > No **WhatsApp Web**, evite misturar `reply` com botões de ação — envie só-reply *ou* só-ação.
@@ -199,6 +222,34 @@ e **botão**. Por card: `header` (`imageUrl` ou `videoUrl`, `title`, `subtitle`)
 > e `REPLY` usa o `id` como payload. Assim como em `/send/button`, **evite misturar `REPLY` com botões
 > de ação (`URL`/`CALL`/`COPY`) no mesmo card** — no WhatsApp Web o card não renderiza; prefira um card
 > só-`REPLY` *ou* só-ação. `PIX` não é suportado dentro de cards (use `/send/button`).
+
+### Link com preview — `POST /send/link`
+
+Cartão de preview de link — a **imagem e o texto inteiros ficam clicáveis** e abrem a URL. Você
+controla o **título**, a **descrição** e a **imagem** do cartão, sem depender do `og:` da página
+de destino. É o formato ideal para anúncios com imagem que leva direto ao link.
+
+```jsonc
+{
+  "number": "5582988898565",
+  "text": "Confira nossa oferta 👇\nhttps://sualoja.com/oferta",
+  "title": "Oferta especial",
+  "description": "Confira as condições exclusivas",
+  "imgUrl": "https://picsum.photos/seed/oferta/800/800",
+  "largePreview": true
+}
+```
+
+| Campo | O que faz |
+|---|---|
+| `text` | Corpo da mensagem (abaixo do cartão). **A URL precisa estar aqui** — é dela que sai o preview clicável. |
+| `title` | Título no topo do cartão. |
+| `description` | Texto dentro do cartão, abaixo do título. |
+| `imgUrl` | Imagem do cartão. **Vazio** → o WhatsApp usa a imagem/título/descrição do `og:` da página de destino. |
+| `largePreview` | `true` = imagem **grande** em destaque (a imagem é enviada para o WhatsApp e referenciada); `false`/ausente = **thumbnail pequena** na lateral. |
+
+> Para o preview grande sair bonito, prefira imagens em **paisagem** (ex.: `1200×630`). Diferente do
+> `/send/button`, aqui **a imagem é clicável e abre o link** — mas não há botão (o cartão inteiro é o link).
 
 ---
 
