@@ -92,6 +92,7 @@ type LinkStruct struct {
 	Url          string       `json:"url"`
 	Description  string       `json:"description"`
 	ImgUrl       string       `json:"imgUrl"`
+	LargePreview bool `json:"largePreview,omitempty"`
 	Id           string       `json:"id"`
 	Delay        int32        `json:"delay"`
 	MentionedJID []string     `json:"mentionedJid"`
@@ -707,7 +708,7 @@ func (s *sendService) sendLinkWithRetry(data *LinkStruct, instance *instance_mod
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] SendLink attempt %d/%d", instance.Id, attempt, maxRetries)
 
-		_, err := s.ensureClientConnectedWithRetry(instance.Id, 2)
+		client, err := s.ensureClientConnectedWithRetry(instance.Id, 2)
 		if err != nil {
 			if attempt == maxRetries {
 				return nil, err
@@ -745,15 +746,33 @@ func (s *sendService) sendLinkWithRetry(data *LinkStruct, instance *instance_mod
 		}
 
 		previewType := waE2E.ExtendedTextMessage_VIDEO
+		ext := &waE2E.ExtendedTextMessage{
+			Text:          &data.Text,
+			Title:         &data.Title,
+			MatchedText:   &matchedText,
+			JPEGThumbnail: fileData,
+			Description:   &data.Description,
+			PreviewType:   &previewType,
+		}
+
+		// Preview GRANDE: upload da imagem + thumbnailDirectPath/mediaKey. Só o JPEGThumbnail
+		// rende preview pequeno; com o upload referenciado o WhatsApp rende a imagem grande.
+		if data.LargePreview && len(fileData) > 0 {
+			if uploaded, upErr := client.Upload(context.Background(), fileData, whatsmeow.MediaLinkThumbnail); upErr == nil {
+				ext.ThumbnailDirectPath = proto.String(uploaded.DirectPath)
+				ext.ThumbnailSHA256 = uploaded.FileSHA256
+				ext.ThumbnailEncSHA256 = uploaded.FileEncSHA256
+				ext.MediaKey = uploaded.MediaKey
+				if img, _, decErr := image.Decode(bytes.NewReader(fileData)); decErr == nil {
+					b := img.Bounds()
+					ext.ThumbnailWidth = proto.Uint32(uint32(b.Dx()))
+					ext.ThumbnailHeight = proto.Uint32(uint32(b.Dy()))
+				}
+			}
+		}
+
 		msg := &waE2E.Message{
-			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-				Text:          &data.Text,
-				Title:         &data.Title,
-				MatchedText:   &matchedText,
-				JPEGThumbnail: fileData,
-				Description:   &data.Description,
-				PreviewType:   &previewType,
-			},
+			ExtendedTextMessage: ext,
 		}
 
 		message, err := s.SendMessage(instance, msg, "ExtendedTextMessage", &SendDataStruct{
