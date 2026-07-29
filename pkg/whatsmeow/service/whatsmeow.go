@@ -378,6 +378,7 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 			store.DeviceProps.Version.Primary = proto.Uint32(uint32(version.Major))
 			store.DeviceProps.Version.Secondary = proto.Uint32(uint32(version.Minor))
 			store.DeviceProps.Version.Tertiary = proto.Uint32(uint32(version.Patch))
+			store.SetWAVersion(store.WAVersionContainer{uint32(version.Major), uint32(version.Minor), uint32(version.Patch)})
 		}
 	}
 
