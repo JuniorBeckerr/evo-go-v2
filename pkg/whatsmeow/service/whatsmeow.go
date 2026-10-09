@@ -49,6 +49,7 @@ import (
 	poll_service "github.com/evolution-foundation/evolution-go/pkg/poll/service"
 	storage_interfaces "github.com/evolution-foundation/evolution-go/pkg/storage/interfaces"
 	"github.com/evolution-foundation/evolution-go/pkg/utils"
+	whatsmeow_limits "github.com/evolution-foundation/evolution-go/pkg/whatsmeow/limits"
 )
 
 type WhatsmeowService interface {
@@ -849,13 +850,41 @@ func GetCachedAccountLimits(instanceID string) (*AccountLimitsCacheEntry, bool) 
 // capping and reachout timelock state, logs them, and caches the result. Error 463 on sends
 // to NEW contacts is caused by these account-level limits, not by local code.
 func (mycli *MyClient) logAccountLimits() {
-	// TEMPORÁRIO (merge com upstream 0.7.2): o whatsmeow oficial não expõe
-	// GetNewChatMessageCappingInfo/GetAccountReachoutTimelock; a consulta é
-	// portada para pkg/whatsmeow/limits no commit seguinte.
-	if mycli.WAClient == nil {
+	client := mycli.WAClient
+	if client == nil {
 		return
 	}
-	mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Account limits fetch not available in this build", mycli.userID)
+	go func() {
+		ctx := context.Background()
+		entry := &AccountLimitsCacheEntry{FetchedAt: time.Now()}
+		got := false
+		if capInfo, err := whatsmeow_limits.GetNewChatMessageCappingInfo(ctx, client); err != nil {
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Failed to fetch new-chat message capping info: %v", mycli.userID, err)
+		} else if capInfo != nil {
+			entry.CappingStatus = string(capInfo.CappingStatus)
+			entry.TotalQuota = capInfo.TotalQuota
+			entry.UsedQuota = capInfo.UsedQuota
+			entry.CycleEnds = capInfo.CycleEndTimestamp.Unix()
+			got = true
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] NEW-CHAT CAPPING: status=%s used=%d/%d cycleEnds=%s ote=%s mv=%s",
+				mycli.userID, capInfo.CappingStatus, capInfo.UsedQuota, capInfo.TotalQuota, capInfo.CycleEndTimestamp.Time, capInfo.OTEStatus, capInfo.MVStatus)
+		}
+		if tl, err := whatsmeow_limits.GetAccountReachoutTimelock(ctx, client); err != nil {
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogWarn("[%s] Failed to fetch reachout timelock: %v", mycli.userID, err)
+		} else if tl != nil {
+			entry.ReachoutActive = tl.IsActive
+			if tl.IsActive {
+				entry.ReachoutEnds = tl.TimeEnforcementEnds.Unix()
+			}
+			entry.ReachoutType = string(tl.EnforcementType)
+			got = true
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] REACHOUT TIMELOCK: active=%t ends=%s type=%s",
+				mycli.userID, tl.IsActive, tl.TimeEnforcementEnds.Time, tl.EnforcementType)
+		}
+		if got {
+			accountLimitsCache.Store(mycli.userID, entry)
+		}
+	}()
 }
 
 // teardownQR clears the QR state and emits a QRTimeout event, then signals the

@@ -20,6 +20,7 @@ import (
 	event_types "github.com/evolution-foundation/evolution-go/pkg/internal/event_types"
 	logger_wrapper "github.com/evolution-foundation/evolution-go/pkg/logger"
 	"github.com/evolution-foundation/evolution-go/pkg/utils"
+	whatsmeow_limits "github.com/evolution-foundation/evolution-go/pkg/whatsmeow/limits"
 	whatsmeow_service "github.com/evolution-foundation/evolution-go/pkg/whatsmeow/service"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/types"
@@ -472,10 +473,36 @@ func (i instances) GetLimits(instanceId string) (*LimitsStruct, error) {
 		return nil, err
 	}
 
-	// TEMPORÁRIO (merge com upstream 0.7.2): a consulta MEX é portada para
-	// pkg/whatsmeow/limits no commit seguinte.
-	_ = client
-	return &LimitsStruct{}, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	result := &LimitsStruct{}
+
+	if tl, err := whatsmeow_limits.GetAccountReachoutTimelock(ctx, client); err != nil {
+		i.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to fetch reachout timelock: %v", instanceId, err)
+	} else if tl != nil {
+		var ends int64
+		if tl.IsActive {
+			ends = tl.TimeEnforcementEnds.Unix()
+		}
+		result.ReachoutTimelock = &ReachoutTimelockStruct{
+			IsActive:            tl.IsActive,
+			TimeEnforcementEnds: ends,
+			EnforcementType:     string(tl.EnforcementType),
+		}
+	}
+
+	if capping, err := whatsmeow_limits.GetNewChatMessageCappingInfo(ctx, client); err != nil {
+		i.loggerWrapper.GetLogger(instanceId).LogWarn("[%s] Failed to fetch new-chat capping info: %v", instanceId, err)
+	} else if capping != nil {
+		result.NewChatCapping = &NewChatCappingStruct{
+			CappingStatus: string(capping.CappingStatus),
+			TotalQuota:    capping.TotalQuota,
+			UsedQuota:     capping.UsedQuota,
+			CycleEnds:     capping.CycleEndTimestamp.Unix(),
+		}
+	}
+
+	return result, nil
 }
 
 func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, error) {
