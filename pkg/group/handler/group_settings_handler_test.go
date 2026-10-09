@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	group_service "github.com/EvolutionAPI/evolution-go/pkg/group/service"
-	instance_model "github.com/EvolutionAPI/evolution-go/pkg/instance/model"
+	group_service "github.com/evolution-foundation/evolution-go/pkg/group/service"
+	instance_model "github.com/evolution-foundation/evolution-go/pkg/instance/model"
 	"github.com/gin-gonic/gin"
 )
 
