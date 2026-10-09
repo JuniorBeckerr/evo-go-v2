@@ -31,6 +31,7 @@ type MessageService interface {
 	GetMessageStatus(data *MessageStatusStruct, instance *instance_model.Instance) (*message_model.Message, string, error)
 	DeleteMessageEveryone(data *MessageStruct, instance *instance_model.Instance) (string, string, error)
 	EditMessage(data *EditMessageStruct, instance *instance_model.Instance) (string, string, error)
+	PinMessage(data *PinMessageStruct, instance *instance_model.Instance) (*PinMessageResult, error)
 }
 
 type messageService struct {
