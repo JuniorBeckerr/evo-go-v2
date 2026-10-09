@@ -131,6 +131,19 @@ type QrcodeStruct struct {
 	PasskeyCode    string `json:"passkeyCode,omitempty"`
 }
 
+// MarshalJSON emits the upstream lower-case keys (qrcode/code) AND the legacy
+// capitalized keys (Qrcode/Code) the fork served before the 0.7.2 merge (the
+// struct had no json tags). The fork's manager and external clients such as
+// ms-wpp read "Qrcode"/"Code", so both spellings are kept for compatibility.
+func (q QrcodeStruct) MarshalJSON() ([]byte, error) {
+	type alias QrcodeStruct
+	return json.Marshal(struct {
+		alias
+		LegacyQrcode string `json:"Qrcode"`
+		LegacyCode   string `json:"Code"`
+	}{alias: alias(q), LegacyQrcode: q.Qrcode, LegacyCode: q.Code})
+}
+
 type PairStruct struct {
 	Subscribe []string `json:"subscribe"`
 	Phone     string   `json:"phone"`
