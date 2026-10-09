@@ -13,6 +13,7 @@ type Instance struct {
 	Token            string    `json:"token" gorm:"unique"`
 	Webhook          string    `json:"webhook"`
 	Webhooks         []string  `json:"webhooks" gorm:"type:text;serializer:json"`
+	WebhookSecret    string    `json:"-" gorm:"column:webhook_secret;type:text"` // HMAC secret for webhook signatures (fallback: WEBHOOK_HMAC_SECRET); never serialized
 	RabbitmqEnable   string    `json:"rabbitmqEnable"`
 	WebSocketEnable  string    `json:"websocketEnable"`
 	NatsEnable       string    `json:"natsEnable"`

@@ -128,7 +128,7 @@ func setupRouter(db *gorm.DB, authDB *sql.DB, sqliteDB *sql.DB, config *config.C
 		)
 	}
 
-	webhookProducer := webhook_producer.NewWebhookProducer(config.WebhookUrl, loggerWrapper)
+	webhookProducer := webhook_producer.NewWebhookProducer(config.WebhookUrl, config.WebhookHmacSecret, loggerWrapper)
 	websocketProducer := websocket_producer.NewWebsocketProducer(loggerWrapper)
 
 	// Cria filas globais se o RabbitMQ global estiver habilitado

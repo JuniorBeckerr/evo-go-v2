@@ -76,7 +76,10 @@ type CreateStruct struct {
 }
 
 type ConnectStruct struct {
-	WebhookUrl      string   `json:"webhookUrl"`
+	WebhookUrl string `json:"webhookUrl"`
+	// HMAC-SHA256 secret for this instance's webhook signatures. Omitted = keep
+	// the current one; "" = clear it (falls back to WEBHOOK_HMAC_SECRET).
+	WebhookSecret   *string  `json:"webhookSecret,omitempty"`
 	Subscribe       []string `json:"subscribe"`
 	Immediate       bool     `json:"immediate"`
 	Phone           string   `json:"phone"`
@@ -249,6 +252,9 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 
 	instance.Events = eventString
 	instance.Webhook = data.WebhookUrl
+	if data.WebhookSecret != nil {
+		instance.WebhookSecret = *data.WebhookSecret
+	}
 	instance.RabbitmqEnable = data.RabbitmqEnable
 	instance.NatsEnable = data.NatsEnable
 	instance.WebSocketEnable = data.WebSocketEnable

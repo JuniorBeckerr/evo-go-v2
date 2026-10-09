@@ -361,11 +361,41 @@ permissão `600`). O essencial:
 | `POSTGRES_AUTH_DB` / `POSTGRES_USERS_DB` | Strings de conexão do PostgreSQL | automático |
 | `DATABASE_SAVE_MESSAGES` | Persistir mensagens no banco | `false` |
 | `WEBHOOK_URL` | Endpoint de webhook padrão | vazio |
+| `WEBHOOK_HMAC_SECRET` | Segredo global para assinar os webhooks com HMAC-SHA256 (ver abaixo) | vazio (sem assinatura) |
 | `PROXY_PROTOCOL` / `PROXY_HOST` / `PROXY_PORT` | Proxy opcional (`http`/`https`/`socks5`) | vazio |
 | `MINIO_ENABLED` | Armazenar mídia no MinIO/S3 | `false` |
 
 Você também pode configurar webhooks **por instância** (vários endpoints) via
 `POST /instance/webhooks/{instanceId}`.
+
+### Assinatura HMAC dos webhooks
+
+Quando há um segredo, **todo POST de webhook** sai assinado — o corpo é enviado byte a byte
+como sempre, só ganha headers:
+
+| Header | Valor |
+|---|---|
+| `X-Evo-Signature` | `sha256=<hex>` — HMAC-SHA256 do **corpo bruto** com o segredo |
+| `X-Webhook-Signature` | o mesmo valor (alias com nome genérico) |
+| `X-Evo-Timestamp` | Unix (segundos) do envio daquela tentativa — **não** entra na assinatura |
+
+Qual segredo é usado:
+
+- **Por instância:** envie `webhookSecret` no body de `POST /instance/connect`
+  (`{"webhookUrl": "...", "webhookSecret": "s3cr3t", ...}`). Omitido = mantém o atual;
+  `""` = remove (volta ao global). O segredo nunca aparece nas respostas da API.
+  Vale para o webhook da instância e para os de `/instance/webhooks/{instanceId}`.
+- **Global:** `WEBHOOK_HMAC_SECRET` — usado pelas instâncias sem segredo próprio e pelo
+  `WEBHOOK_URL` global.
+- Sem nenhum dos dois, os webhooks saem sem assinatura (comportamento anterior).
+
+Verificação (Python):
+
+```python
+import hmac, hashlib
+expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+ok = hmac.compare_digest(expected, request.headers["X-Evo-Signature"])
+```
 
 ---
 
@@ -379,9 +409,9 @@ Todos os endpoints exigem o header `apikey`. Principais:
 | **Envio — interativo** | `POST /send/button`, `POST /send/list`, `POST /send/carousel` |
 | **Envio — mídia e texto** | `POST /send/text`, `/send/link`, `/send/media` (URL ou base64), `/send/poll`, `/send/sticker`, `/send/location`, `/send/contact` |
 | **Status** | `POST /send/status/text`, `POST /send/status/media` |
-| **Mensagens** | `POST /message/react`, `/message/edit`, `/message/delete`, `/message/markread`, `/message/downloadmedia` |
+| **Mensagens** | `POST /message/react`, `/message/edit`, `/message/delete`, `/message/markread`, `/message/downloadmedia`, `/message/pin`, `/message/unpin` |
 | **Usuários** | `POST /user/check`, `/user/info`, `/user/avatar`, `/user/block`, atualização de perfil |
-| **Grupos / Comunidade / Newsletter / Etiquetas** | endpoints completos de gerenciamento |
+| **Grupos / Comunidade / Newsletter / Etiquetas** | endpoints completos de gerenciamento (inclui `POST /group/settings` e `POST /group/participant`) |
 | **Webhooks (por instância)** | `GET/POST/DELETE /instance/webhooks/{instanceId}` |
 | **Proxy (por instância)** | `POST /instance/proxy/{instanceId}` |
 

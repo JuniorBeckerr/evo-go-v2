@@ -36,6 +36,7 @@ import (
 
 	"github.com/EvolutionAPI/evolution-go/pkg/config"
 	producer_interfaces "github.com/EvolutionAPI/evolution-go/pkg/events/interfaces"
+	webhook_producer "github.com/EvolutionAPI/evolution-go/pkg/events/webhook"
 	instance_model "github.com/EvolutionAPI/evolution-go/pkg/instance/model"
 	instance_repository "github.com/EvolutionAPI/evolution-go/pkg/instance/repository"
 	"github.com/EvolutionAPI/evolution-go/pkg/internal/event_types"
@@ -2276,7 +2277,12 @@ func (w *whatsmeowService) sendToQueueOrWebhook(instance *instance_model.Instanc
 		}
 	}
 	for _, webhookURL := range allWebhooks {
-		err := w.webhookProducer.Produce(queueName, jsonData, webhookURL, instance.Id)
+		var err error
+		if signed, ok := w.webhookProducer.(webhook_producer.SignedProducer); ok {
+			err = signed.ProduceWithSecret(queueName, jsonData, webhookURL, instance.Id, instance.WebhookSecret)
+		} else {
+			err = w.webhookProducer.Produce(queueName, jsonData, webhookURL, instance.Id)
+		}
 		if err != nil {
 			w.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Failed to send message to webhook %s: %s", instance.Id, webhookURL, err)
 		} else {

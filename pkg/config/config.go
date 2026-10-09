@@ -34,6 +34,7 @@ type Config struct {
 	AmqpUrl              string
 	AmqpGlobalEnabled    bool
 	WebhookUrl           string
+	WebhookHmacSecret    string
 	ClientName           string
 	ApiAudioConverter    string
 	ApiAudioConverterKey string
@@ -258,6 +259,7 @@ func Load() *Config {
 	amqpGlobalEnabled := os.Getenv(config_env.AMQP_GLOBAL_ENABLED)
 
 	webhookUrl := os.Getenv(config_env.WEBHOOK_URL)
+	webhookHmacSecret := os.Getenv(config_env.WEBHOOK_HMAC_SECRET)
 
 	apiAudioConverter := os.Getenv(config_env.API_AUDIO_CONVERTER)
 	apiAudioConverterKey := os.Getenv(config_env.API_AUDIO_CONVERTER_KEY)
@@ -356,6 +358,7 @@ func Load() *Config {
 		AmqpUrl:              amqpUrl,
 		AmqpGlobalEnabled:    amqpGlobalEnabled == "true",
 		WebhookUrl:           webhookUrl,
+		WebhookHmacSecret:    webhookHmacSecret,
 		ClientName:           clientName,
 		ApiAudioConverter:    apiAudioConverter,
 		ApiAudioConverterKey: apiAudioConverterKey,
