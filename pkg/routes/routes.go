@@ -189,6 +189,7 @@ func (r *Routes) AssignRoutes(eng *gin.Engine) {
 			routes.GET("/myall", r.groupHandler.GetMyGroups) // TODO: not working
 			routes.POST("/join", r.groupHandler.JoinGroupLink)
 			routes.POST("/leave", r.jidValidationMiddleware.ValidateNumberField(), r.groupHandler.LeaveGroup)
+			routes.POST("/settings", r.jidValidationMiddleware.ValidateJIDFields("groupJid"), r.groupHandler.UpdateGroupSettings)
 		}
 	}
 	routes = eng.Group("/call")

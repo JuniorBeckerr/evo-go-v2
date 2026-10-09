@@ -95,8 +95,34 @@ type LeaveGroupStruct struct {
 }
 
 type UpdateGroupSettingsStruct struct {
-	GroupJID string `json:"groupJid"`
-	Action   string `json:"action"` // announcement, not_announcement, locked, unlocked
+	GroupJID string `json:"groupJid" example:"120363000000000000@g.us"`
+	// announcement | not_announcement | locked | unlocked | approval_on | approval_off | admin_add | all_member_add
+	Action string `json:"action" example:"announcement"`
+}
+
+// GroupSettingsActions lists the actions accepted by UpdateGroupSettings.
+var GroupSettingsActions = []string{
+	"announcement",     // only admins can send messages
+	"not_announcement", // everyone can send messages
+	"locked",           // only admins can edit group info
+	"unlocked",         // everyone can edit group info
+	"approval_on",      // admins must approve new members
+	"approval_off",     // no join approval
+	"admin_add",        // only admins can add members
+	"all_member_add",   // every member can add members
+}
+
+// InvalidGroupSettingsActionMessage is returned when the action is not one of GroupSettingsActions.
+const InvalidGroupSettingsActionMessage = "invalid action. Valid actions: announcement, not_announcement, locked, unlocked, approval_on, approval_off, admin_add, all_member_add"
+
+// IsValidGroupSettingsAction reports whether action is accepted by UpdateGroupSettings.
+func IsValidGroupSettingsAction(action string) bool {
+	for _, a := range GroupSettingsActions {
+		if a == action {
+			return true
+		}
+	}
+	return false
 }
 
 type GetGroupRequestParticipantsStruct struct {
@@ -475,20 +501,9 @@ func (g *groupService) UpdateGroupSettings(data *UpdateGroupSettingsStruct, inst
 	}
 
 	// Validate action
-	validActions := map[string]bool{
-		"announcement":     true,
-		"not_announcement": true,
-		"locked":           true,
-		"unlocked":         true,
-		"approval_on":      true,
-		"approval_off":     true,
-		"admin_add":        true,
-		"all_member_add":   true,
-	}
-
-	if !validActions[data.Action] {
+	if !IsValidGroupSettingsAction(data.Action) {
 		g.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Invalid action: %s", instance.Id, data.Action)
-		return errors.New("invalid action. Valid actions: announcement, not_announcement, locked, unlocked, approval_on, approval_off, admin_add, all_member_add")
+		return errors.New(InvalidGroupSettingsActionMessage)
 	}
 
 	// Apply settings based on action
