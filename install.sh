@@ -297,8 +297,11 @@ cat <<EOF
                 (envie no header HTTP  apikey: <key>)
 
   ${C_BOLD}Comece agora (jeito mais facil):${C_RESET}
-    1) Abra o Manager acima e faca login com a API key
-    2) Crie uma instancia e escaneie o QR Code no WhatsApp
+    1) Abra o Manager acima, faca login com a API key e conclua o registro
+       da licenca (a API responde 503 LICENSE_REQUIRED ate ativar)
+    2) Opcional: coloque EVOLUTION_OPERATOR_EMAIL=<e-mail do registro> em
+       ${ENV_FILE} para ativacao automatica nas proximas subidas
+    3) Crie uma instancia e escaneie o QR Code no WhatsApp
 
   ${C_BOLD}Ou via API — cria uma instancia:${C_RESET}
     curl -X POST http://${PUBLIC_IP}:${APP_PORT}/instance/create \\

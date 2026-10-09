@@ -1,5 +1,21 @@
 # Evolution GO - Changelog
 
+## Fork — sync com upstream v0.7.2
+
+- **Merge do upstream 0.7.2** (passkey, `events.QR`, correções de `/instance/pair` e
+  `/instance/status`, módulo renomeado para `github.com/evolution-foundation/evolution-go`).
+- **whatsmeow oficial** — removidos `whatsmeow-lib/` e o `replace`; usa
+  `go.mau.fi/whatsmeow v0.0.0-20260630180629-b572e5bcb92b` (já traz a correção do erro 463:
+  cstoken/NCT salt/tctoken). O que era exclusivo do fork foi portado para o app:
+  `pkg/whatsmeow/limits` (capping de novos chats e reachout timelock, usados por
+  `/instance/limits`) e o piso de `waVersion` 2.3000.1044083468.
+- **Licença** — `pkg/core` idêntico ao upstream: a API responde `503 LICENSE_REQUIRED` até a
+  licença ser ativada pelo Manager; `EVOLUTION_OPERATOR_EMAIL` ativa automaticamente nas
+  subidas seguintes.
+- Mantidos: mensagens interativas do fork em `/send/button` (o `/send/list` passa a usar a
+  versão do upstream com `<biz><list>`), `/group/settings`, `/message/pin|unpin`, middleware
+  de participantes de grupo, assinatura HMAC de webhooks, telemetria desativada.
+
 ## Fork (2026-07-11)
 
 ### 🔧 Fixes

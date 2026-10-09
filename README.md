@@ -17,7 +17,7 @@
 
 ## 🔀 Sobre este fork
 
-Distribuicao customizada do [evolution-foundation/evolution-go](https://github.com/evolution-foundation/evolution-go) (base **v0.7.1**), com mensagens
+Distribuicao customizada do [evolution-foundation/evolution-go](https://github.com/evolution-foundation/evolution-go) (base **v0.7.2**), com mensagens
 interativas que renderizam em todas as plataformas, instalador 1-clique e correcoes de envio:
 
 - **Build 100% reproduzivel** — `cmd/evolution-go/` e `pkg/server/` versionados e `.gitignore`
@@ -32,7 +32,7 @@ interativas que renderizam em todas as plataformas, instalador 1-clique e correc
 ### Atualizando com o projeto oficial
 
 O histórico deste repositório é baseado no [evolution-foundation/evolution-go](https://github.com/evolution-foundation/evolution-go)
-(base: v0.7.1), então dá para trazer novidades do oficial com um merge de verdade:
+(base: v0.7.2), então dá para trazer novidades do oficial com um merge de verdade:
 
 ```bash
 git remote add upstream https://github.com/evolution-foundation/evolution-go.git  # uma vez só
@@ -40,9 +40,13 @@ git fetch upstream --tags
 git merge upstream/main   # resolva conflitos, se houver, e teste antes de publicar
 ```
 
-> Atenção: as alterações custom mexem bastante em `pkg/sendMessage`, `pkg/instance` e na
-> `whatsmeow-lib/` vendorizada — nos merges, em caso de conflito nessas áreas, prefira a
-> versão deste fork e reaplique a mudança do oficial por cima com cuidado.
+> Atenção: as alterações custom mexem bastante em `pkg/sendMessage`, `pkg/instance` e
+> `pkg/whatsmeow` — nos merges, em caso de conflito nessas áreas, prefira a versão deste fork e
+> reaplique a mudança do oficial por cima com cuidado. Desde a v0.7.2 o fork usa o
+> **whatsmeow oficial** (`go.mau.fi/whatsmeow`, sem `whatsmeow-lib` vendorizada nem `replace`);
+> o que era exclusivo do fork vive no app (`pkg/whatsmeow/limits` para `/instance/limits` e o
+> piso de `waVersion` em `pkg/whatsmeow/service/wa_version.go`). A licença (`pkg/core`) é a do
+> upstream, sem alterações.
 
 ---
 
@@ -56,7 +60,8 @@ curl -fsSL https://raw.githubusercontent.com/JuniorBeckerr/evo-go-v2/main/instal
 
 Só isso. O instalador configura o Docker, compila a aplicação a partir do código-fonte,
 gera segredos fortes e sobe tudo — e no final imprime a **URL do Manager** e a sua **API key**.
-Sem Coolify, sem painel de controle, sem contas externas. [Detalhes abaixo.](#-instalação)
+Sem Coolify, sem painel de controle. Depois é só **ativar a licença** pelo Manager
+([Ativação da licença](#-ativação-da-licença)). [Detalhes abaixo.](#-instalação)
 
 ---
 
@@ -82,7 +87,7 @@ Sem Coolify, sem painel de controle, sem contas externas. [Detalhes abaixo.](#-i
 - 📣 **Status do WhatsApp** — publique texto/imagem/vídeo em `status@broadcast`.
 - 🔌 **Eventos do seu jeito** — Webhook, WebSocket, RabbitMQ (AMQP) e NATS.
 - 🔒 **Privado por padrão** — **sem telemetria**, segredos gerados automaticamente,
-  banco de dados nunca exposto à internet, roda 100% offline (sem servidor de licença).
+  banco de dados nunca exposto à internet.
 - 🚀 **Self-hosting em 1 clique** — um único script transforma uma VPS Ubuntu limpa numa API rodando.
 
 ---
@@ -349,6 +354,27 @@ Quando estiver no ar, abra a **interface do Manager** em `http://SEU_IP:8080/man
 
 ---
 
+## 🔑 Ativação da licença
+
+O Evolution GO exige uma licença para operar. Na primeira execução:
+
+1. Suba o servidor — os endpoints da API respondem `503` (`LICENSE_REQUIRED`) até a ativação
+2. Abra o **Manager** em `http://SEU_IP:8080/manager/login`
+3. Informe a URL da API e a `GLOBAL_API_KEY`
+4. Conclua o fluxo de registro da licença
+5. Depois de ativada, a API fica totalmente operacional
+
+O status da licença fica salvo no banco (tabela `runtime_configs`) e heartbeats periódicos
+mantêm a ativação.
+
+**Ativação headless (automática):** defina `EVOLUTION_OPERATOR_EMAIL` com o e-mail usado no
+seu primeiro registro manual. Na inicialização o serviço chama `/v1/register/auto` em
+silêncio e pula o fluxo pelo navegador (se o e-mail ainda não estiver registrado, volta para
+o fluxo manual). Os endpoints `GET /license/status`, `/license/register` e
+`/license/activate` ficam sempre acessíveis.
+
+---
+
 ## ⚙️ Configuração
 
 Os segredos ficam em `/opt/evolution-go/deploy/.env` (gerado na primeira execução, com
@@ -360,6 +386,7 @@ permissão `600`). O essencial:
 | `GLOBAL_API_KEY` | API key mestra (enviada no header `apikey`) | **obrigatória** |
 | `POSTGRES_AUTH_DB` / `POSTGRES_USERS_DB` | Strings de conexão do PostgreSQL | automático |
 | `DATABASE_SAVE_MESSAGES` | Persistir mensagens no banco | `false` |
+| `EVOLUTION_OPERATOR_EMAIL` | E-mail usado no primeiro registro manual da licença; ativa a licença automaticamente (headless) na inicialização | vazio (fluxo manual) |
 | `WEBHOOK_URL` | Endpoint de webhook padrão | vazio |
 | `WEBHOOK_HMAC_SECRET` | Segredo global para assinar os webhooks com HMAC-SHA256 (ver abaixo) | vazio (sem assinatura) |
 | `PROXY_PROTOCOL` / `PROXY_HOST` / `PROXY_PORT` | Proxy opcional (`http`/`https`/`socks5`) | vazio |
@@ -424,7 +451,7 @@ A referência completa e sempre atualizada é o Swagger embutido em `/swagger/in
 - **Sem telemetria.** A instância nunca "liga para casa" — nada sobre o seu tráfego sai do seu servidor.
 - **Segredos gerados automaticamente.** A API key e a senha do banco são aleatórias por instalação e salvas com permissão `600`.
 - **Banco de dados privado.** O PostgreSQL só é acessível pela aplicação na rede interna do Docker — nunca é publicado na internet.
-- **Roda offline.** Não exige servidor de licença nem ativação externa.
+- **Licença obrigatória.** Como no projeto oficial, a API exige uma licença ativa e envia heartbeats periódicos ao servidor de licenças (ver [Ativação da licença](#-ativação-da-licença)).
 - Coloque por trás de um reverse proxy (Nginx/Caddy/Traefik) para adicionar HTTPS na frente da API.
 
 ---
@@ -435,7 +462,7 @@ A referência completa e sempre atualizada é o Swagger embutido em `/swagger/in
 |---|---|
 | Linguagem | Go 1.25 |
 | HTTP | Gin |
-| Motor do WhatsApp | whatsmeow (vendorizado) |
+| Motor do WhatsApp | whatsmeow oficial (`go.mau.fi/whatsmeow`) |
 | Banco de dados | PostgreSQL + GORM |
 | Eventos | Webhook · WebSocket · RabbitMQ · NATS |
 | Armazenamento de mídia | MinIO / S3 (opcional) |
