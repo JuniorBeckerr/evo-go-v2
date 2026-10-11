@@ -173,6 +173,20 @@ type ProxyConfig struct {
 	Username string `json:"username"`
 }
 
+// internalRestarts guarda os kill channels sinalizados por ReconnectClient.
+// A chave e o proprio canal (cada StartClient tem o seu), entao uma marca que
+// sobre nunca afeta a goroutine seguinte da mesma instancia.
+var internalRestarts sync.Map // map[chan bool]struct{}
+
+func markInternalRestart(ch chan bool) { internalRestarts.Store(ch, struct{}{}) }
+
+// consumeInternalRestart informa (e limpa) se o kill recebido em ch veio de um
+// restart interno.
+func consumeInternalRestart(ch chan bool) bool {
+	_, ok := internalRestarts.LoadAndDelete(ch)
+	return ok
+}
+
 func (w whatsmeowService) ReconnectClient(instanceId string) error {
 	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Starting reconnection process - simulating restart", instanceId)
 
@@ -198,8 +212,11 @@ func (w whatsmeowService) ReconnectClient(instanceId string) error {
 	// Passo 2: Limpar todos os recursos da instância
 	w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Cleaning up resources", instanceId)
 
-	// Enviar sinal de kill para a goroutine StartClient e aguardar entrega
+	// Enviar sinal de kill para a goroutine StartClient e aguardar entrega.
+	// Marca o canal como restart interno para que StartClient NAO emita um
+	// LoggedOut sintetico (a sessao continua valida; so o socket e recriado).
 	if killChan, exists := w.killChannel[instanceId]; exists {
+		markInternalRestart(killChan)
 		select {
 		case killChan <- true:
 			w.loggerWrapper.GetLogger(instanceId).LogInfo("[%s] Kill signal sent", instanceId)
@@ -582,6 +599,13 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 			err := w.instanceRepository.UpdateConnected(cd.Instance.Id, cd.Instance.Connected, cd.Instance.DisconnectReason)
 			if err != nil {
 				w.loggerWrapper.GetLogger(cd.Instance.Id).LogError("[%s] Error updating instance: %s", cd.Instance.Id, err)
+			}
+
+			// Restart interno (ReconnectClient): a sessao continua valida, entao
+			// nao dispara LoggedOut — so logouts reais devem emiti-lo.
+			if consumeInternalRestart(myKillChan) {
+				w.loggerWrapper.GetLogger(cd.Instance.Id).LogInfo("[%s] Internal restart, skipping LoggedOut event", cd.Instance.Id)
+				return
 			}
 
 			postMap := make(map[string]interface{})
