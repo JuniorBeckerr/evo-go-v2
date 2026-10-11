@@ -359,13 +359,13 @@ func (g *groupHandler) UpdateParticipant(ctx *gin.Context) {
 		return
 	}
 
-	err = g.groupService.UpdateParticipant(data, instance)
+	results, err := g.groupService.UpdateParticipant(data, instance)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"message": "success"})
+	ctx.JSON(http.StatusOK, gin.H{"message": "success", "participants": results})
 }
 
 // Get my groups

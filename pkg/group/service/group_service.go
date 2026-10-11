@@ -27,7 +27,7 @@ type GroupService interface {
 	SetGroupName(data *SetGroupNameStruct, instance *instance_model.Instance) error
 	SetGroupDescription(data *SetGroupDescriptionStruct, instance *instance_model.Instance) error
 	CreateGroup(data *CreateGroupStruct, instance *instance_model.Instance) (gin.H, error)
-	UpdateParticipant(data *AddParticipantStruct, instance *instance_model.Instance) error
+	UpdateParticipant(data *AddParticipantStruct, instance *instance_model.Instance) ([]ParticipantResult, error)
 	UpdateGroupSettings(data *UpdateGroupSettingsStruct, instance *instance_model.Instance) error
 	GetGroupRequestParticipants(data *GetGroupRequestParticipantsStruct, instance *instance_model.Instance) ([]EnrichedGroupParticipantRequest, error)
 	UpdateGroupRequestParticipants(data *UpdateGroupRequestParticipantsStruct, instance *instance_model.Instance) ([]types.GroupParticipant, error)
@@ -407,10 +407,51 @@ func (g *groupService) CreateGroup(data *CreateGroupStruct, instance *instance_m
 	return response, nil
 }
 
-func (g *groupService) UpdateParticipant(data *AddParticipantStruct, instance *instance_model.Instance) error {
+// ParticipantResult is the per-participant outcome of /group/participant. Status is 200 on success, otherwise
+// the WhatsApp error code (403 privacy: invite only, see AddRequest; 404/400 not on WhatsApp; 409 already in group).
+type ParticipantResult struct {
+	JID         string                 `json:"jid"`
+	PhoneNumber string                 `json:"phoneNumber,omitempty"`
+	LID         string                 `json:"lid,omitempty"`
+	Status      int                    `json:"status"`
+	Error       int                    `json:"error"`
+	AddRequest  *ParticipantAddRequest `json:"addRequest,omitempty"`
+}
+
+// ParticipantAddRequest is the group invite WhatsApp issues when privacy blocks a direct add (Expiration in unix s).
+type ParticipantAddRequest struct {
+	Code       string `json:"code"`
+	Expiration int64  `json:"expiration"`
+}
+
+func jidString(j types.JID) string {
+	if j.IsEmpty() {
+		return ""
+	}
+	return j.String()
+}
+
+// ParticipantResults maps whatsmeow's UpdateGroupParticipants result to the API response.
+func ParticipantResults(resp []types.GroupParticipant) []ParticipantResult {
+	out := make([]ParticipantResult, 0, len(resp))
+	for _, p := range resp {
+		r := ParticipantResult{JID: jidString(p.JID), PhoneNumber: jidString(p.PhoneNumber), LID: jidString(p.LID),
+			Status: 200, Error: p.Error}
+		if p.Error != 0 {
+			r.Status = p.Error
+		}
+		if p.AddRequest != nil {
+			r.AddRequest = &ParticipantAddRequest{Code: p.AddRequest.Code, Expiration: p.AddRequest.Expiration.Unix()}
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func (g *groupService) UpdateParticipant(data *AddParticipantStruct, instance *instance_model.Instance) ([]ParticipantResult, error) {
 	client, err := g.ensureClientConnected(instance.Id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var participants []types.JID
@@ -419,17 +460,17 @@ func (g *groupService) UpdateParticipant(data *AddParticipantStruct, instance *i
 		participants = append(participants, recipient)
 		if !ok {
 			g.loggerWrapper.GetLogger(instance.Id).LogError("[%s] Error validating message fields", instance.Id)
-			return errors.New("invalid phone number")
+			return nil, errors.New("invalid phone number")
 		}
 	}
 
-	_, err = client.UpdateGroupParticipants(context.Background(), data.GroupJID, participants, data.Action)
+	resp, err := client.UpdateGroupParticipants(context.Background(), data.GroupJID, participants, data.Action)
 	if err != nil {
-		g.loggerWrapper.GetLogger(instance.Id).LogError("[%s] error create group: %v", instance.Id, err)
-		return err
+		g.loggerWrapper.GetLogger(instance.Id).LogError("[%s] error update participants: %v", instance.Id, err)
+		return nil, err
 	}
 
-	return nil
+	return ParticipantResults(resp), nil
 }
 
 func (g *groupService) GetMyGroups(instance *instance_model.Instance) ([]types.GroupInfo, error) {
