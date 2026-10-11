@@ -304,10 +304,9 @@ func (g *groupHandler) CreateGroup(ctx *gin.Context) {
 		return
 	}
 
-	if len(data.Participants) < 1 {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "participants are required"})
-		return
-	}
+	// participants is optional: an empty/omitted list creates a group with only
+	// the creator (whatsmeow CreateGroup accepts it). Any participant given is
+	// still validated by ValidateMultipleNumbers and by the service.
 
 	group, err := g.groupService.CreateGroup(data, instance)
 	if err != nil {
