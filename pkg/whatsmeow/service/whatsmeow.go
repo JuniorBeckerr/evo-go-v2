@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/image/webp"
@@ -132,6 +133,11 @@ type MyClient struct {
 	loggerWrapper      *logger_wrapper.LoggerManager
 	qrcodeCount        int
 	passkeyCeremony    *ceremony.Store
+	// done e fechado quando a goroutine StartClient deste cliente termina.
+	// Goroutines auxiliares (presenca) escutam aqui em vez do kill channel,
+	// que deve ter um unico consumidor (StartClient) para nao roubar o sinal.
+	done            chan struct{}
+	presenceRunning atomic.Bool
 }
 
 func (mycli *MyClient) persistMessageAsync(message message_model.Message) {
@@ -515,7 +521,11 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 		loggerWrapper:      w.loggerWrapper,
 		qrcodeCount:        0,
 		passkeyCeremony:    w.passkeyCeremony,
+		done:               make(chan struct{}),
 	}
+	// Sinaliza (broadcast) o fim deste cliente para as goroutines auxiliares,
+	// qualquer que seja o caminho de saida de StartClient.
+	defer close(mycli.done)
 
 	mycli.eventHandlerID = mycli.WAClient.AddEventHandler(mycli.myEventHandler)
 
@@ -648,6 +658,12 @@ func (w whatsmeowService) StartClient(cd *ClientData) {
 }
 
 func schedulePresenceUpdates(mycli *MyClient) {
+	// Uma unica goroutine de presenca por cliente, mesmo com varios Connected.
+	if !mycli.presenceRunning.CompareAndSwap(false, true) {
+		return
+	}
+	defer mycli.presenceRunning.Store(false)
+
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
@@ -667,9 +683,12 @@ func schedulePresenceUpdates(mycli *MyClient) {
 			randomInterval := time.Duration(1+rand.Intn(3)) * time.Hour
 			ticker = time.NewTicker(randomInterval)
 
-		case <-mycli.killChannel[mycli.userID]:
-			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Received kill signal, stopping presence updates", mycli.userID)
-			return // Encerra a goroutine quando receber sinal de kill
+		case <-mycli.done:
+			// NAO consumir o kill channel aqui: o sinal e de StartClient (que
+			// distingue restart interno de logout real). done e fechado quando
+			// StartClient termina, entao todos os ouvintes param juntos.
+			mycli.loggerWrapper.GetLogger(mycli.userID).LogInfo("[%s] Client stopped, stopping presence updates", mycli.userID)
+			return
 		}
 	}
 }
