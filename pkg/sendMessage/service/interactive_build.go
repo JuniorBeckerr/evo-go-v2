@@ -83,6 +83,64 @@ func buildNativeFlowList(data *ListStruct, templateID string) (*waE2E.Message, e
 	return &waE2E.Message{InteractiveMessage: im}, nil
 }
 
+// buildListMessage escolhe o envelope da lista (data.Format) e devolve o messageType para o SendMessage
+// ("InteractiveMessage" recebe o biz node native_flow "mixed" dos botoes; "ListMessage" recebe da whatsmeow o
+// biz <list v=2 type=single_select>).
+func buildListMessage(data *ListStruct, templateID string) (*waE2E.Message, string, error) {
+	interactive, err := buildNativeFlowList(data, templateID)
+	if err != nil {
+		return nil, "", err
+	}
+	switch data.Format {
+	case "interactive_viewonce":
+		return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+			InteractiveMessage: interactive.InteractiveMessage,
+			MessageContextInfo: &waE2E.MessageContextInfo{
+				DeviceListMetadata: &waE2E.DeviceListMetadata{}, DeviceListMetadataVersion: proto.Int32(2),
+			},
+		}}}, "InteractiveMessage", nil
+	case "legacy", "legacy_viewonce":
+		list := legacyListMessage(data)
+		if data.Format == "legacy" {
+			return &waE2E.Message{ListMessage: list}, "ListMessage", nil
+		}
+		return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
+			ListMessage: list,
+			MessageContextInfo: &waE2E.MessageContextInfo{
+				DeviceListMetadata: &waE2E.DeviceListMetadata{}, DeviceListMetadataVersion: proto.Int32(2),
+			},
+		}}}, "ListMessage", nil
+	default:
+		interactive.MessageContextInfo = &waE2E.MessageContextInfo{DeviceListMetadata: &waE2E.DeviceListMetadata{}}
+		return interactive, "InteractiveMessage", nil
+	}
+}
+
+func legacyListMessage(data *ListStruct) *waE2E.ListMessage {
+	buttonText := data.ButtonText
+	if buttonText == "" {
+		buttonText = "Ver Menu"
+	}
+	var sections []*waE2E.ListMessage_Section
+	for si, sec := range data.Sections {
+		var rows []*waE2E.ListMessage_Row
+		for ri, r := range sec.Rows {
+			id := r.RowId
+			if id == "" {
+				id = "row_" + strconv.Itoa(si) + "_" + strconv.Itoa(ri)
+			}
+			rows = append(rows, &waE2E.ListMessage_Row{Title: proto.String(r.Title),
+				Description: proto.String(r.Description), RowID: proto.String(id)})
+		}
+		sections = append(sections, &waE2E.ListMessage_Section{Title: proto.String(sec.Title), Rows: rows})
+	}
+	return &waE2E.ListMessage{
+		Title: proto.String(data.Title), Description: proto.String(data.Description),
+		ButtonText: proto.String(buttonText), FooterText: proto.String(data.FooterText),
+		ListType: waE2E.ListMessage_SINGLE_SELECT.Enum(), Sections: sections,
+	}
+}
+
 // carouselButton converte o botao do cartao em NativeFlowButton com JSON escapado (o Sprintf antigo quebrava o
 // JSON com aspas no texto). URL e telefone vem no `id` (CarouselButtonStruct).
 func carouselButton(btn CarouselButtonStruct) *waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton {
@@ -121,6 +179,9 @@ func mergeLinkMetadata(data *LinkStruct, title, description, imgURL string) {
 // linkMatchedText devolve a URL da previa: a do texto ou, sem URL no texto, o campo `url` (anexado ao texto para o
 // WhatsApp mostrar a previa).
 func linkMatchedText(data *LinkStruct) string {
+	if data.HideUrl && data.Url != "" {
+		return data.Url
+	}
 	if found := findURL(data.Text); found != "" {
 		return found
 	}

@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"go.mau.fi/whatsmeow/proto/waE2E"
 )
 
 func TestBuildNativeFlowList_SingleSelectButton(t *testing.T) {
@@ -167,5 +169,46 @@ func TestParseLinkMetadata_PrefersOGAndIgnoresSVGTitles(t *testing.T) {
 	title, _, _, _ = parseLinkMetadata(strings.NewReader(`<html><head><title>Pagina</title></head><body><svg><title>Vodafone</title></svg></body></html>`))
 	if title != "Pagina" {
 		t.Fatalf("titulo deve ser o <title> do head, veio %q", title)
+	}
+}
+
+func TestLinkMatchedText_HideUrlKeepsTextClean(t *testing.T) {
+	data := &LinkStruct{Text: "toque no cartao", Url: "https://s.x/l/abc", HideUrl: true}
+	if got := linkMatchedText(data); got != "https://s.x/l/abc" || data.Text != "toque no cartao" {
+		t.Fatalf("hideUrl: matched=%q text=%q", got, data.Text)
+	}
+}
+
+func TestBuildListMessage_Formats(t *testing.T) {
+	data := &ListStruct{Title: "T", Description: "D", ButtonText: "B", FooterText: "F",
+		Sections: []Section{{Title: "S", Rows: []Row{{Title: "R", RowId: "r"}}}}}
+	cases := map[string]func(m *waE2E.Message) bool{
+		"": func(m *waE2E.Message) bool {
+			return m.GetInteractiveMessage() != nil && m.GetMessageContextInfo().GetDeviceListMetadata() != nil
+		},
+		"interactive_viewonce": func(m *waE2E.Message) bool {
+			in := m.GetViewOnceMessage().GetMessage()
+			return in.GetInteractiveMessage() != nil && in.GetMessageContextInfo().GetDeviceListMetadataVersion() == 2
+		},
+		"legacy_viewonce": func(m *waE2E.Message) bool {
+			return m.GetViewOnceMessage().GetMessage().GetListMessage().GetListType() == waE2E.ListMessage_SINGLE_SELECT
+		},
+		"legacy": func(m *waE2E.Message) bool {
+			return m.GetListMessage().GetListType() == waE2E.ListMessage_SINGLE_SELECT && m.GetViewOnceMessage() == nil
+		},
+	}
+	for format, ok := range cases {
+		data.Format = format
+		msg, msgType, err := buildListMessage(data, "1")
+		if err != nil || !ok(msg) {
+			t.Fatalf("formato %q: tipo=%s err=%v msg=%v", format, msgType, err, msg)
+		}
+		wantType := "InteractiveMessage"
+		if strings.HasPrefix(format, "legacy") {
+			wantType = "ListMessage"
+		}
+		if msgType != wantType {
+			t.Fatalf("formato %q: tipo %s", format, msgType)
+		}
 	}
 }

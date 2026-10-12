@@ -96,6 +96,8 @@ type LinkStruct struct {
 	Description  string       `json:"description"`
 	ImgUrl       string       `json:"imgUrl"`
 	LargePreview bool `json:"largePreview,omitempty"`
+	// HideUrl: o texto vai sem a URL; o cartao da previa continua apontando para `url` (matchedText).
+	HideUrl bool `json:"hideUrl,omitempty"`
 	Id           string       `json:"id"`
 	Delay        int32        `json:"delay"`
 	MentionedJID []string     `json:"mentionedJid"`
@@ -270,6 +272,8 @@ type ListStruct struct {
 	FooterText string `json:"footerText" example:"Evolution GO"`
 	// Sections with rows. At least one section with one row is required.
 	Sections []Section `json:"sections"`
+	// Format (opcional): "" = NativeFlow single_select; "interactive_viewonce", "legacy_viewonce", "legacy".
+	Format string `json:"format,omitempty"`
 	// Typing delay (milliseconds) applied before sending the message.
 	Delay int32 `json:"delay,omitempty" example:"1200"`
 	// JIDs to mention inside the body text.
@@ -2222,12 +2226,12 @@ func sectionsToString(data *ListStruct) (string, error) {
 func (s *sendService) SendList(data *ListStruct, instance *instance_model.Instance) (*MessageSendStruct, error) {
 	// Lista como NativeFlow "single_select" (ver buildNativeFlowList): o ListMessage legado volta 405.
 	templateID := strconv.FormatInt(time.Now().UnixNano()/1000000, 10)
-	msg, err := buildNativeFlowList(data, templateID)
+	msg, msgType, err := buildListMessage(data, templateID)
 	if err != nil {
 		return nil, err
 	}
 
-	message, err := s.SendMessage(instance, msg, "InteractiveMessage", &SendDataStruct{
+	message, err := s.SendMessage(instance, msg, msgType, &SendDataStruct{
 		Number:       data.Number,
 		Delay:        data.Delay,
 		MentionAll:   data.MentionAll,
