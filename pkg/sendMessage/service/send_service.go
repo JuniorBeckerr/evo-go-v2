@@ -662,19 +662,30 @@ func fetchLinkMetadata(url string) (string, string, string, error) {
 		return "", "", "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", "", "", fmt.Errorf("link metadata: HTTP %d", resp.StatusCode)
+	}
+	return parseLinkMetadata(resp.Body)
+}
 
-	doc, err := html.Parse(resp.Body)
+// parseLinkMetadata: og:title > primeiro <title> fora de <svg> (o antigo pegava o ultimo <title> da pagina, ex.: o
+// titulo de um SVG de logo de cliente no github.com -> "Vodafone").
+func parseLinkMetadata(r io.Reader) (string, string, string, error) {
+	doc, err := html.Parse(r)
 	if err != nil {
 		return "", "", "", err
 	}
 
-	var title, description, imgURL string
+	var title, ogTitle, description, imgURL string
 
 	var f func(*html.Node)
 	f = func(n *html.Node) {
 		if n.Type == html.ElementNode {
-			if n.Data == "title" && n.FirstChild != nil {
-				title = n.FirstChild.Data
+			if n.Data == "svg" {
+				return
+			}
+			if n.Data == "title" && n.FirstChild != nil && title == "" {
+				title = strings.TrimSpace(n.FirstChild.Data)
 			}
 			if n.Data == "meta" {
 				var property, content string
@@ -686,24 +697,26 @@ func fetchLinkMetadata(url string) (string, string, string, error) {
 						content = attr.Val
 					}
 				}
-
-				if (property == "description" || property == "og:description") && content != "" {
+				switch {
+				case content == "":
+				case property == "og:title" && ogTitle == "":
+					ogTitle = content
+				case (property == "og:description" || property == "description") && description == "":
 					description = content
-				}
-
-				if property == "og:image" && content != "" {
+				case property == "og:image" && imgURL == "":
 					imgURL = content
 				}
 			}
 		}
-
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			f(c)
 		}
 	}
-
 	f(doc)
 
+	if ogTitle != "" {
+		title = ogTitle
+	}
 	return title, description, imgURL, nil
 }
 

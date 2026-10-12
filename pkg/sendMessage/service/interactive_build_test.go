@@ -3,6 +3,7 @@ package send_service
 import (
 	"encoding/json"
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -152,5 +153,19 @@ func TestVideoPreview_InvalidDataIsEmpty(t *testing.T) {
 	p := videoPreview([]byte("nao e video"))
 	if p.Thumbnail != nil || p.Seconds != 0 {
 		t.Fatalf("dado invalido deve dar previa vazia: %+v", p)
+	}
+}
+
+func TestParseLinkMetadata_PrefersOGAndIgnoresSVGTitles(t *testing.T) {
+	page := `<html><head><title>GitHub · Build</title><meta property="og:title" content="GitHub OG">
+<meta name="description" content="desc"><meta property="og:image" content="https://img/x.png"></head>
+<body><svg><title>Vodafone</title></svg></body></html>`
+	title, desc, img, err := parseLinkMetadata(strings.NewReader(page))
+	if err != nil || title != "GitHub OG" || desc != "desc" || img != "https://img/x.png" {
+		t.Fatalf("got %q %q %q %v", title, desc, img, err)
+	}
+	title, _, _, _ = parseLinkMetadata(strings.NewReader(`<html><head><title>Pagina</title></head><body><svg><title>Vodafone</title></svg></body></html>`))
+	if title != "Pagina" {
+		t.Fatalf("titulo deve ser o <title> do head, veio %q", title)
 	}
 }
