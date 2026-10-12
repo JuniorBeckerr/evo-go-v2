@@ -215,3 +215,38 @@ func TestBuildListMessage_Formats(t *testing.T) {
 		}
 	}
 }
+
+func TestListAsButtonStruct_SameShapeAsButtons(t *testing.T) {
+	q := QuotedStruct{MessageID: "q1"}
+	data := &ListStruct{Number: "5545", Title: "Lista E2E", Description: "Escolha", ButtonText: "Ver opcoes",
+		FooterText: "rodape", Delay: 10, Quoted: q, Format: "buttons_path",
+		Sections: []Section{{Title: "Secao 1", Rows: []Row{{Title: "Item 1", Description: "d1", RowId: "r1"}}}}}
+	b, err := listAsButtonStruct(data)
+	if err != nil {
+		t.Fatalf("erro: %v", err)
+	}
+	if b.Number != "5545" || b.Title != "Lista E2E" || b.Description != "Escolha" || b.Footer != "rodape" ||
+		b.Delay != 10 || b.Quoted.MessageID != "q1" || len(b.Buttons) != 0 {
+		t.Fatalf("campos errados: %+v", b)
+	}
+	if len(b.nativeButtons) != 1 || b.nativeButtons[0].GetName() != "single_select" {
+		t.Fatalf("esperava 1 botao single_select: %v", b.nativeButtons)
+	}
+	var params struct {
+		Title    string `json:"title"`
+		Sections []struct {
+			Title string `json:"title"`
+			Rows  []struct{ Header, Title, Description, ID string }
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal([]byte(b.nativeButtons[0].GetButtonParamsJSON()), &params); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if params.Title != "Ver opcoes" || params.Sections[0].Title != "Secao 1" ||
+		params.Sections[0].Rows[0].ID != "r1" || params.Sections[0].Rows[0].Description != "d1" {
+		t.Fatalf("parametros errados: %+v", params)
+	}
+	if _, err := listAsButtonStruct(&ListStruct{Sections: []Section{{Title: "s"}}}); err == nil {
+		t.Fatal("lista sem linhas deve falhar")
+	}
+}

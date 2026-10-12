@@ -19,6 +19,49 @@ import (
 // dos botoes, que renderiza no Android, iOS e Web). O ListMessage legado embrulhado em DocumentWithCaptionMessage
 // com o node <bot biz_bot> e recusado pelo servidor do WhatsApp com erro 405 para contas comuns.
 func buildNativeFlowList(data *ListStruct, templateID string) (*waE2E.Message, error) {
+	button, err := singleSelectButton(data)
+	if err != nil {
+		return nil, err
+	}
+	messageParams := `{"from":"api","templateId":` + templateID + `}`
+	im := &waE2E.InteractiveMessage{
+		Body: &waE2E.InteractiveMessage_Body{Text: proto.String(data.Description)},
+		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
+			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
+				Buttons:           []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{button},
+				MessageParamsJSON: proto.String(messageParams),
+				MessageVersion:    proto.Int32(1),
+			},
+		},
+		ContextInfo: &waE2E.ContextInfo{},
+	}
+	if data.Title != "" {
+		im.Header = &waE2E.InteractiveMessage_Header{Title: proto.String(data.Title), HasMediaAttachment: proto.Bool(false)}
+	}
+	if data.FooterText != "" {
+		im.Footer = &waE2E.InteractiveMessage_Footer{Text: proto.String(data.FooterText)}
+	}
+	return &waE2E.Message{InteractiveMessage: im}, nil
+}
+
+// listAsButtonStruct converte a lista num ButtonStruct cujo unico botao e o NativeFlow "single_select": com
+// format=buttons_path o SendList delega ao SendButton (mesmo envelope, biz node "mixed", corpo/cabecalho/rodape e
+// envio dos botoes que aparecem no celular).
+func listAsButtonStruct(data *ListStruct) (*ButtonStruct, error) {
+	button, err := singleSelectButton(data)
+	if err != nil {
+		return nil, err
+	}
+	return &ButtonStruct{
+		Number: data.Number, Title: data.Title, Description: data.Description, Footer: data.FooterText,
+		Delay: data.Delay, MentionedJID: data.MentionedJID, MentionAll: data.MentionAll, FormatJid: data.FormatJid,
+		Quoted:        data.Quoted,
+		nativeButtons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{button},
+	}, nil
+}
+
+// singleSelectButton monta o botao NativeFlow "single_select" com as secoes/linhas da lista.
+func singleSelectButton(data *ListStruct) (*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, error) {
 	type row struct {
 		Header      string `json:"header"`
 		Title       string `json:"title"`
@@ -59,28 +102,10 @@ func buildNativeFlowList(data *ListStruct, templateID string) (*waE2E.Message, e
 	if err != nil {
 		return nil, err
 	}
-	messageParams := `{"from":"api","templateId":` + templateID + `}`
-	im := &waE2E.InteractiveMessage{
-		Body: &waE2E.InteractiveMessage_Body{Text: proto.String(data.Description)},
-		InteractiveMessage: &waE2E.InteractiveMessage_NativeFlowMessage_{
-			NativeFlowMessage: &waE2E.InteractiveMessage_NativeFlowMessage{
-				Buttons: []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{{
-					Name:             proto.String("single_select"),
-					ButtonParamsJSON: proto.String(string(params)),
-				}},
-				MessageParamsJSON: proto.String(messageParams),
-				MessageVersion:    proto.Int32(1),
-			},
-		},
-		ContextInfo: &waE2E.ContextInfo{},
-	}
-	if data.Title != "" {
-		im.Header = &waE2E.InteractiveMessage_Header{Title: proto.String(data.Title), HasMediaAttachment: proto.Bool(false)}
-	}
-	if data.FooterText != "" {
-		im.Footer = &waE2E.InteractiveMessage_Footer{Text: proto.String(data.FooterText)}
-	}
-	return &waE2E.Message{InteractiveMessage: im}, nil
+	return &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
+		Name:             proto.String("single_select"),
+		ButtonParamsJSON: proto.String(string(params)),
+	}, nil
 }
 
 // buildListMessage escolhe o envelope da lista (data.Format) e devolve o messageType para o SendMessage

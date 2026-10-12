@@ -236,6 +236,8 @@ type ButtonStruct struct {
 	FormatJid    *bool        `json:"formatJid,omitempty"`
 	// Quoted (reply-to) context.
 	Quoted       QuotedStruct `json:"quoted,omitempty"`
+	// nativeButtons: botoes NativeFlow ja montados (uso interno: lista com format=buttons_path), somados aos de Buttons.
+	nativeButtons []*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton
 }
 
 // Row is a selectable item inside a list Section.
@@ -273,7 +275,7 @@ type ListStruct struct {
 	// Sections with rows. At least one section with one row is required.
 	Sections []Section `json:"sections"`
 	// Format (opcional): ""/"interactive_viewonce" = NativeFlow single_select em viewOnceMessage (padrao);
-	// "interactive" = sem envelope; "legacy_viewonce"/"legacy" = ListMessage (o servidor recusa com 405).
+	// "buttons_path" = botao single_select enviado pelo SendButton (mesmo envelope dos botoes); "interactive" = sem envelope; "legacy_viewonce"/"legacy" = ListMessage (o servidor recusa com 405).
 	Format string `json:"format,omitempty"`
 	// Typing delay (milliseconds) applied before sending the message.
 	Delay int32 `json:"delay,omitempty" example:"1200"`
@@ -1875,6 +1877,8 @@ func (s *sendService) SendButton(data *ButtonStruct, instance *instance_model.In
 		})
 	}
 
+	buttons = append(buttons, data.nativeButtons...)
+
 	messageId := client.GenerateMessageID()
 	templateId := strconv.FormatInt(time.Now().UnixNano()/1000000, 10)
 	messageParamsJSON := `{"from":"api","templateId":` + templateId + `}`
@@ -2226,6 +2230,14 @@ func sectionsToString(data *ListStruct) (string, error) {
 
 func (s *sendService) SendList(data *ListStruct, instance *instance_model.Instance) (*MessageSendStruct, error) {
 	// Lista como NativeFlow "single_select" (ver buildNativeFlowList): o ListMessage legado volta 405.
+	if data.Format == "buttons_path" {
+		// mesmo caminho do SendButton (botoes renderizam no celular): InteractiveMessage solta + biz "mixed"
+		button, err := listAsButtonStruct(data)
+		if err != nil {
+			return nil, err
+		}
+		return s.SendButton(button, instance)
+	}
 	templateID := strconv.FormatInt(time.Now().UnixNano()/1000000, 10)
 	msg, msgType, err := buildListMessage(data, templateID)
 	if err != nil {
