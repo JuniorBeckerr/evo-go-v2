@@ -985,6 +985,27 @@ func (mycli *MyClient) teardownQR(reason string, forceLogout bool) {
 	}
 }
 
+// groupParticipantPNs resolve os participantes @lid de um GroupInfo (Join/Leave/Promote/Demote) para o JID de
+// telefone pelo store de LIDs do whatsmeow. Quem nao tem mapeamento fica de fora (o consumidor segue com o @lid).
+func (mycli *MyClient) groupParticipantPNs(evt *events.GroupInfo) map[string]string {
+	out := map[string]string{}
+	if mycli.WAClient == nil || mycli.WAClient.Store == nil || mycli.WAClient.Store.LIDs == nil {
+		return out
+	}
+	for _, list := range [][]types.JID{evt.Join, evt.Leave, evt.Promote, evt.Demote} {
+		for _, jid := range list {
+			if jid.Server != types.HiddenUserServer {
+				continue
+			}
+			pn, err := mycli.WAClient.Store.LIDs.GetPNForLID(context.TODO(), jid)
+			if err == nil && !pn.IsEmpty() {
+				out[jid.String()] = pn.String()
+			}
+		}
+	}
+	return out
+}
+
 func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	userID := mycli.userID
 	postMap := make(map[string]interface{})
@@ -2173,6 +2194,11 @@ func (mycli *MyClient) myEventHandler(rawEvt interface{}) {
 	case *events.GroupInfo:
 		doWebhook = true
 		postMap["event"] = "GroupInfo"
+		// grupos em modo LID mandam os participantes como @lid: anexa o telefone (PN) de cada um que o store conhece,
+		// para quem consome o webhook ligar entrada/saida ao contato
+		if pns := mycli.groupParticipantPNs(evt); len(pns) > 0 {
+			postMap["participantPNs"] = pns
+		}
 	case *events.JoinedGroup:
 		doWebhook = true
 		postMap["event"] = "JoinedGroup"
