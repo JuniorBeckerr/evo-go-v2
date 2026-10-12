@@ -184,6 +184,9 @@ func TestBuildListMessage_Formats(t *testing.T) {
 		Sections: []Section{{Title: "S", Rows: []Row{{Title: "R", RowId: "r"}}}}}
 	cases := map[string]func(m *waE2E.Message) bool{
 		"": func(m *waE2E.Message) bool {
+			return m.GetViewOnceMessage().GetMessage().GetInteractiveMessage() != nil
+		},
+		"interactive": func(m *waE2E.Message) bool {
 			return m.GetInteractiveMessage() != nil && m.GetMessageContextInfo().GetDeviceListMetadata() != nil
 		},
 		"interactive_viewonce": func(m *waE2E.Message) bool {

@@ -92,7 +92,9 @@ func buildListMessage(data *ListStruct, templateID string) (*waE2E.Message, stri
 		return nil, "", err
 	}
 	switch data.Format {
-	case "interactive_viewonce":
+	case "", "interactive_viewonce":
+		// padrao: no E2E de 12/10 so este envelope chegou ao WhatsApp Desktop e ao celular (o NativeFlow solto foi
+		// confirmado pelo celular mas nao aparecia; o ListMessage legado volta 405)
 		return &waE2E.Message{ViewOnceMessage: &waE2E.FutureProofMessage{Message: &waE2E.Message{
 			InteractiveMessage: interactive.InteractiveMessage,
 			MessageContextInfo: &waE2E.MessageContextInfo{
@@ -110,7 +112,7 @@ func buildListMessage(data *ListStruct, templateID string) (*waE2E.Message, stri
 				DeviceListMetadata: &waE2E.DeviceListMetadata{}, DeviceListMetadataVersion: proto.Int32(2),
 			},
 		}}}, "ListMessage", nil
-	default:
+	default: // "interactive": NativeFlow sem envelope
 		interactive.MessageContextInfo = &waE2E.MessageContextInfo{DeviceListMetadata: &waE2E.DeviceListMetadata{}}
 		return interactive, "InteractiveMessage", nil
 	}

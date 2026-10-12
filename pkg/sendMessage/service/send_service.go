@@ -272,7 +272,8 @@ type ListStruct struct {
 	FooterText string `json:"footerText" example:"Evolution GO"`
 	// Sections with rows. At least one section with one row is required.
 	Sections []Section `json:"sections"`
-	// Format (opcional): "" = NativeFlow single_select; "interactive_viewonce", "legacy_viewonce", "legacy".
+	// Format (opcional): ""/"interactive_viewonce" = NativeFlow single_select em viewOnceMessage (padrao);
+	// "interactive" = sem envelope; "legacy_viewonce"/"legacy" = ListMessage (o servidor recusa com 405).
 	Format string `json:"format,omitempty"`
 	// Typing delay (milliseconds) applied before sending the message.
 	Delay int32 `json:"delay,omitempty" example:"1200"`
