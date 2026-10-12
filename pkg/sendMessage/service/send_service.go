@@ -3,7 +3,6 @@ package send_service
 import (
 	"bytes"
 	"context"
-	crypto_rand "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -118,6 +117,8 @@ type MediaStruct struct {
 	FormatJid       *bool        `json:"formatJid,omitempty"`
 	Quoted          QuotedStruct `json:"quoted"`
 	ForwardingScore *uint32      `json:"forwardingScore,omitempty"`
+	// Ptt: so para type=audio. Omitido/true = mensagem de voz; false = audio comum (player de arquivo).
+	Ptt *bool `json:"ptt,omitempty"`
 }
 
 type PollStruct struct {
@@ -656,7 +657,7 @@ func (s *sendService) sendTextWithRetry(data *TextStruct, instance *instance_mod
 }
 
 func fetchLinkMetadata(url string) (string, string, string, error) {
-	resp, err := http.Get(url)
+	resp, err := linkHTTPClient.Get(url)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -722,33 +723,29 @@ func (s *sendService) sendLinkWithRetry(data *LinkStruct, instance *instance_mod
 			continue
 		}
 
-		matchedText := findURL(data.Text)
+		matchedText := linkMatchedText(data)
 
-		if matchedText != "" && data.ImgUrl == "" {
+		// Metadados da pagina so completam o que faltou; falha na busca (DNS, timeout) nao derruba o envio:
+		// a mensagem sai com o que o chamador mandou.
+		if matchedText != "" && attempt == 1 && (data.ImgUrl == "" || data.Title == "" || data.Description == "") {
 			title, description, imgUrl, err := fetchLinkMetadata(matchedText)
 			if err != nil {
-				if attempt == maxRetries {
-					return nil, err
-				}
-				continue
+				s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] SendLink: metadados indisponiveis para %s: %v", instance.Id, matchedText, err)
+			} else {
+				mergeLinkMetadata(data, title, description, imgUrl)
 			}
-
-			data.Title = title
-			data.Description = description
-			data.ImgUrl = imgUrl
 		}
 
 		var fileData []byte
 		if data.ImgUrl != "" {
-			resp, err := http.Get(data.ImgUrl)
-			if err != nil {
-				if attempt == maxRetries {
-					return nil, err
+			if resp, err := linkHTTPClient.Get(data.ImgUrl); err == nil {
+				if resp.StatusCode < 400 {
+					fileData, _ = io.ReadAll(resp.Body)
 				}
-				continue
+				resp.Body.Close()
+			} else {
+				s.loggerWrapper.GetLogger(instance.Id).LogWarn("[%s] SendLink: imagem da previa indisponivel: %v", instance.Id, err)
 			}
-			defer resp.Body.Close()
-			fileData, _ = io.ReadAll(resp.Body)
 		}
 
 		previewType := waE2E.ExtendedTextMessage_VIDEO
@@ -1204,6 +1201,7 @@ func (s *sendService) sendMediaFileWithRetry(data *MediaStruct, fileData []byte,
 			return nil, errors.New("invalid media type")
 		}
 
+		applyMediaPresentation(media, data, fileData)
 		message, err := s.SendMessage(instance, media, mediaType, &SendDataStruct{
 			Id:              data.Id,
 			Number:          data.Number,
@@ -1261,6 +1259,9 @@ func (s *sendService) sendMediaUrlWithRetry(data *MediaStruct, instance *instanc
 			return nil, err
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("invalid media url: download returned HTTP %d", resp.StatusCode)
+		}
 
 		s.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Download concluído em %v. Lendo dados...", instance.Id, time.Since(startTime))
 
@@ -1509,6 +1510,7 @@ func (s *sendService) sendMediaUrlWithRetry(data *MediaStruct, instance *instanc
 		}
 
 		messageStart := time.Now()
+		applyMediaPresentation(media, data, fileData)
 		message, err := s.SendMessage(instance, media, mediaType, &SendDataStruct{
 			Id:              data.Id,
 			Number:          data.Number,
@@ -2205,97 +2207,20 @@ func sectionsToString(data *ListStruct) (string, error) {
 }
 
 func (s *sendService) SendList(data *ListStruct, instance *instance_model.Instance) (*MessageSendStruct, error) {
-	// Legacy ListMessage format - works on iOS, Android and Web
-	// Matching PAPI Node.js default (non-modern) path exactly
-
-	buttonText := data.ButtonText
-	if buttonText == "" {
-		buttonText = "Ver Menu"
+	// Lista como NativeFlow "single_select" (ver buildNativeFlowList): o ListMessage legado volta 405.
+	templateID := strconv.FormatInt(time.Now().UnixNano()/1000000, 10)
+	msg, err := buildNativeFlowList(data, templateID)
+	if err != nil {
+		return nil, err
 	}
 
-	// Build sections in legacy ListMessage format
-	var sections []*waE2E.ListMessage_Section
-	for _, sec := range data.Sections {
-		sectionTitle := sec.Title
-		if sectionTitle == "" {
-			sectionTitle = " "
-		}
-		var rows []*waE2E.ListMessage_Row
-		for i, r := range sec.Rows {
-			rowTitle := r.Title
-			if rowTitle == "" {
-				rowTitle = " "
-			}
-			rowId := r.RowId
-			if rowId == "" {
-				rowId = fmt.Sprintf("row_%d_%d", i, len(rows))
-			}
-			rows = append(rows, &waE2E.ListMessage_Row{
-				Title:       proto.String(rowTitle),
-				Description: proto.String(r.Description),
-				RowID:       proto.String(rowId),
-			})
-		}
-		sections = append(sections, &waE2E.ListMessage_Section{
-			Title: proto.String(sectionTitle),
-			Rows:  rows,
-		})
-	}
-
-	listType := waE2E.ListMessage_SINGLE_SELECT
-	listMessage := &waE2E.ListMessage{
-		Title:       proto.String(data.Title),
-		Description: proto.String(data.Description),
-		ButtonText:  proto.String(buttonText),
-		FooterText:  proto.String(data.FooterText),
-		ListType:    &listType,
-		Sections:    sections,
-	}
-
-	// Wrap ListMessage in DocumentWithCaptionMessage (Baileys PR #36) so modern WhatsApp renders it.
-	// MessageSecret (32 random bytes) is required for iOS rendering.
-	listMsgSecret := make([]byte, 32)
-	_, _ = crypto_rand.Read(listMsgSecret)
-
-	msg := &waE2E.Message{
-		DocumentWithCaptionMessage: &waE2E.FutureProofMessage{
-			Message: &waE2E.Message{
-				ListMessage: listMessage,
-			},
-		},
-		MessageContextInfo: &waE2E.MessageContextInfo{
-			MessageSecret: listMsgSecret,
-		},
-	}
-
-	// Build biz <list> node — required for mobile rendering of modern lists.
-	listBizNodes := []waBinary.Node{
-		{
-			Tag: "biz",
-			Content: []waBinary.Node{{
-				Tag: "list",
-				Attrs: waBinary.Attrs{
-					"v":    "2",
-					"type": "single_select",
-				},
-			}},
-		},
-	}
-	if !strings.Contains(data.Number, "@g.us") {
-		listBizNodes = append(listBizNodes, waBinary.Node{
-			Tag:   "bot",
-			Attrs: waBinary.Attrs{"biz_bot": "1"},
-		})
-	}
-
-	message, err := s.SendMessage(instance, msg, "ListMessage", &SendDataStruct{
-		Number:          data.Number,
-		Delay:           data.Delay,
-		MentionAll:      data.MentionAll,
-		MentionedJID:    data.MentionedJID,
-		FormatJid:       data.FormatJid,
-		Quoted:          data.Quoted,
-		AdditionalNodes: &listBizNodes,
+	message, err := s.SendMessage(instance, msg, "InteractiveMessage", &SendDataStruct{
+		Number:       data.Number,
+		Delay:        data.Delay,
+		MentionAll:   data.MentionAll,
+		MentionedJID: data.MentionedJID,
+		FormatJid:    data.FormatJid,
+		Quoted:       data.Quoted,
 	})
 
 	if err != nil {
@@ -2908,10 +2833,14 @@ func (s *sendService) SendCarousel(data *CarouselStruct, instance *instance_mode
 				Text: proto.String(card.Body.Text),
 			},
 			Header: &waE2E.InteractiveMessage_Header{
-				Title:              proto.String(card.Header.Title),
-				Subtitle:           proto.String(card.Header.Subtitle),
 				HasMediaAttachment: proto.Bool(false),
 			},
+		}
+		if card.Header.Title != "" {
+			interactiveCard.Header.Title = proto.String(card.Header.Title)
+		}
+		if card.Header.Subtitle != "" {
+			interactiveCard.Header.Subtitle = proto.String(card.Header.Subtitle)
 		}
 
 		// Add media to header if URL provided
@@ -2984,39 +2913,7 @@ func (s *sendService) SendCarousel(data *CarouselStruct, instance *instance_mode
 		if len(card.Buttons) > 0 {
 			buttons := make([]*waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton, len(card.Buttons))
 			for j, btn := range card.Buttons {
-				buttonType := strings.ToUpper(btn.Type)
-				if buttonType == "" {
-					buttonType = "REPLY" // Default type
-				}
-
-				var buttonName string
-				var buttonParams string
-
-				switch buttonType {
-				case "URL":
-					// URL button - opens a link
-					buttonName = "cta_url"
-					buttonParams = fmt.Sprintf(`{"display_text":"%s","url":"%s"}`, btn.DisplayText, btn.Id)
-				case "CALL":
-					// Call button - initiates a phone call
-					buttonName = "cta_call"
-					buttonParams = fmt.Sprintf(`{"display_text":"%s","phone_number":"%s"}`, btn.DisplayText, btn.Id)
-				case "COPY":
-					// Copy button - copies text to clipboard
-					buttonName = "cta_copy"
-					buttonParams = fmt.Sprintf(`{"display_text":"%s","copy_code":"%s"}`, btn.DisplayText, btn.CopyCode)
-				case "REPLY":
-					fallthrough
-				default:
-					// Quick reply button (default)
-					buttonName = "quick_reply"
-					buttonParams = fmt.Sprintf(`{"display_text":"%s","id":"%s"}`, btn.DisplayText, btn.Id)
-				}
-
-				buttons[j] = &waE2E.InteractiveMessage_NativeFlowMessage_NativeFlowButton{
-					Name:             proto.String(buttonName),
-					ButtonParamsJSON: proto.String(buttonParams),
-				}
+				buttons[j] = carouselButton(btn)
 			}
 
 			// Cards in carousel: do NOT set MessageParamsJSON or MessageVersion
@@ -3073,8 +2970,13 @@ func (s *sendService) SendCarousel(data *CarouselStruct, instance *instance_mode
 	// Always set ContextInfo (required for iOS)
 	interactiveMsg.ContextInfo = contextInfo
 
+	// MessageContextInfo com DeviceListMetadata (como o upstream): sem ele o celular do destinatario nao
+	// confirmava o carrossel (so o WhatsApp Web recebia).
 	msg := &waE2E.Message{
 		InteractiveMessage: interactiveMsg,
+		MessageContextInfo: &waE2E.MessageContextInfo{
+			DeviceListMetadata: &waE2E.DeviceListMetadata{},
+		},
 	}
 
 	message, err := s.SendMessage(instance, msg, "InteractiveMessage", &SendDataStruct{
