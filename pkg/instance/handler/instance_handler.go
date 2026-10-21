@@ -286,6 +286,10 @@ func (i *instanceHandler) Qr(ctx *gin.Context) {
 
 	qrcode, err := i.instanceService.GetQr(instance)
 	if err != nil {
+		if status, body, ok := qrErrorResponse(err); ok {
+			ctx.JSON(status, body)
+			return
+		}
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -327,6 +331,10 @@ func (i *instanceHandler) Pair(ctx *gin.Context) {
 
 	pairingCode, err := i.instanceService.Pair(data, instance)
 	if err != nil {
+		if status, body, ok := qrErrorResponse(err); ok {
+			ctx.JSON(status, body)
+			return
+		}
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

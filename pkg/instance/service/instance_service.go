@@ -301,7 +301,11 @@ func (i instances) Connect(data *ConnectStruct, instance *instance_model.Instanc
 	}
 
 	// Se a instância não estiver rodando, inicia uma nova
-	if !isInstanceRunning {
+	if !isInstanceRunning && !clientStarts.begin(instance.Id) {
+		// Outro start (connect/qr/pair) ainda esta subindo o cliente: nao
+		// sobe um segundo cliente concorrente para a mesma instancia.
+		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Client start already in progress, not starting another", instance.Id)
+	} else if !isInstanceRunning {
 		i.loggerWrapper.GetLogger(instance.Id).LogInfo("[%s] Starting new client instance", instance.Id)
 
 		i.killChannel[instance.Id] = make(chan bool)
@@ -520,86 +524,75 @@ func (i instances) GetLimits(instanceId string) (*LimitsStruct, error) {
 
 func (i instances) GetQr(instance *instance_model.Instance) (*QrcodeStruct, error) {
 	logger := i.loggerWrapper.GetLogger(instance.Id)
-	client := i.clientPointer[instance.Id]
+	id := instance.Id
 
-	// Se não há cliente ou o cliente está logado, precisamos iniciar um novo cliente
-	if client == nil || client.IsLoggedIn() {
-		if client != nil && client.IsLoggedIn() {
-			logger.LogInfo("[%s] Client is logged in, starting new instance for QR code", instance.Id)
+	client := i.clientPointer[id]
+	hasClient := client != nil
+	loggedIn := hasClient && client.IsLoggedIn()
+	connected := hasClient && client.IsConnected()
+
+	switch decideQrAction(hasClient, loggedIn, connected) {
+	case qrAlreadyLoggedIn:
+		clientStarts.clear(id)
+		return nil, ErrAlreadyLoggedIn
+	case qrStartClient:
+		// Polling nao pode reiniciar o cliente a cada chamada: so um start por
+		// janela; enquanto ele sobe, respondemos "pending".
+		if clientStarts.begin(id) {
+			logger.LogInfo("[%s] No running client, starting instance for QR code", id)
+			if err := i.whatsmeowService.StartInstance(id); err != nil {
+				clientStarts.clear(id)
+				logger.LogError("[%s] Failed to start instance: %v", id, err)
+				return nil, fmt.Errorf("failed to start instance: %w", err)
+			}
 		} else {
-			logger.LogInfo("[%s] No client found, starting new instance for QR code", instance.Id)
-		}
-
-		// Iniciar nova instância para gerar QR code
-		err := i.whatsmeowService.StartInstance(instance.Id)
-		if err != nil {
-			logger.LogError("[%s] Failed to start instance: %v", instance.Id, err)
-			return nil, fmt.Errorf("failed to start instance: %w", err)
-		}
-
-		// Aguardar um pouco para o cliente iniciar e gerar QR code
-		logger.LogInfo("[%s] Waiting for QR code generation...", instance.Id)
-		time.Sleep(3 * time.Second)
-
-		// Verificar novamente se há cliente
-		client = i.clientPointer[instance.Id]
-		if client != nil && client.IsLoggedIn() {
-			return nil, fmt.Errorf("session already logged in")
-		}
-	} else if !client.IsConnected() {
-		// Se o cliente existe mas não está conectado, pode estar aguardando QR code
-		logger.LogInfo("[%s] Client exists but not connected, checking for existing QR code", instance.Id)
-	}
-
-	// Buscar instância atualizada do banco para pegar o QR code mais recente
-	instance, err := i.instanceRepository.GetInstanceByID(instance.Id)
-	if err != nil {
-		return nil, err
-	}
-
-	// If a passkey ceremony is in progress, there is no QR to scan — return the
-	// passkey stage + the #wapk openUrl so the manager can render the
-	// "Abrir WhatsApp Web" button. Checked before the empty-QR branch because
-	// during a passkey ceremony instance.Qrcode is empty.
-	if store := i.whatsmeowService.PasskeyCeremonyStore(); store != nil {
-		if token, state, ok := store.StateByInstance(instance.Id); ok {
-			logger.LogInfo("[%s] Passkey ceremony active (stage=%s) — returning passkey info instead of QR", instance.Id, state.Stage)
-			return &QrcodeStruct{
-				PasskeyStage:   state.Stage,
-				PasskeyCode:    state.Code,
-				PasskeyOpenURL: buildPasskeyOpenURL(token),
-			}, nil
+			logger.LogInfo("[%s] Client start already in progress, not restarting", id)
 		}
 	}
 
-	code := instance.Qrcode
-	if code == "" {
-		// Se não há QR code ainda, aguardar um pouco mais e tentar novamente
-		logger.LogInfo("[%s] No QR code available yet, waiting a bit more...", instance.Id)
-		time.Sleep(2 * time.Second)
-
-		instance, err = i.instanceRepository.GetInstanceByID(instance.Id)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		current, err := i.instanceRepository.GetInstanceByID(id)
 		if err != nil {
 			return nil, err
 		}
 
-		code = instance.Qrcode
-		if code == "" {
-			return nil, fmt.Errorf("no QR code available. Please wait a moment and try again")
+		// If a passkey ceremony is in progress, there is no QR to scan — return the
+		// passkey stage + the #wapk openUrl so the manager can render the
+		// "Abrir WhatsApp Web" button.
+		if store := i.whatsmeowService.PasskeyCeremonyStore(); store != nil {
+			if token, state, ok := store.StateByInstance(id); ok {
+				logger.LogInfo("[%s] Passkey ceremony active (stage=%s) — returning passkey info instead of QR", id, state.Stage)
+				return &QrcodeStruct{
+					PasskeyStage:   state.Stage,
+					PasskeyCode:    state.Code,
+					PasskeyOpenURL: buildPasskeyOpenURL(token),
+				}, nil
+			}
 		}
-	}
 
-	parts := strings.Split(code, "|")
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("invalid QR code format")
-	}
+		c := i.clientPointer[id]
+		if c != nil && c.IsLoggedIn() && c.IsConnected() {
+			clientStarts.clear(id)
+			return nil, ErrAlreadyLoggedIn
+		}
 
-	qr := &QrcodeStruct{
-		Qrcode: parts[0],
-		Code:   parts[1],
-	}
+		// So devolve o QR guardado se ha um cliente vivo em pareamento (evita
+		// servir um QR velho de um cliente que ja morreu).
+		if c != nil && !c.IsLoggedIn() && current.Qrcode != "" {
+			parts := strings.Split(current.Qrcode, "|")
+			if len(parts) < 2 {
+				return nil, fmt.Errorf("invalid QR code format")
+			}
+			return &QrcodeStruct{Qrcode: parts[0], Code: parts[1]}, nil
+		}
 
-	return qr, nil
+		if time.Now().After(deadline) {
+			logger.LogInfo("[%s] QR code not generated yet (pending)", id)
+			return nil, ErrQrPending
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // buildPasskeyOpenURL builds the URL the manager opens to start the passkey
@@ -624,17 +617,37 @@ func (i instances) Pair(data *PairStruct, instance *instance_model.Instance) (*P
 		if client != nil && client.IsLoggedIn() {
 			return nil, fmt.Errorf("instance is already authenticated")
 		}
-		logger.LogInfo("[%s] No active connection, starting instance for phone pairing", instance.Id)
-		if err := i.whatsmeowService.StartInstance(instance.Id); err != nil {
-			logger.LogError("[%s] Failed to start instance for pairing: %v", instance.Id, err)
-			return nil, fmt.Errorf("failed to start instance: %w", err)
+		if clientStarts.begin(instance.Id) {
+			logger.LogInfo("[%s] No active connection, starting instance for phone pairing", instance.Id)
+			if err := i.whatsmeowService.StartInstance(instance.Id); err != nil {
+				clientStarts.clear(instance.Id)
+				logger.LogError("[%s] Failed to start instance for pairing: %v", instance.Id, err)
+				return nil, fmt.Errorf("failed to start instance: %w", err)
+			}
+		} else {
+			logger.LogInfo("[%s] Client start already in progress, waiting for it to pair", instance.Id)
 		}
-		// Wait for the WA websocket connection and initial QR generation to establish.
-		// PairPhone must be called after the QR event is received per whatsmeow docs.
-		time.Sleep(3 * time.Second)
-		client = i.clientPointer[instance.Id]
-		if client == nil {
-			return nil, fmt.Errorf("failed to initialize client for pairing")
+		// PairPhone must be called after the websocket is up and the first QR
+		// event arrived (whatsmeow docs): wait for a connected, not-logged-in
+		// client (up to 15s) instead of a fixed sleep.
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			client = i.clientPointer[instance.Id]
+			if client != nil && client.IsLoggedIn() {
+				break
+			}
+			if client != nil && client.IsConnected() {
+				if current, err := i.instanceRepository.GetInstanceByID(instance.Id); err == nil && current.Qrcode != "" {
+					break
+				}
+			}
+			if time.Now().After(deadline) {
+				if client == nil || !client.IsConnected() {
+					return nil, ErrQrPending
+				}
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
 		}
 	}
 
