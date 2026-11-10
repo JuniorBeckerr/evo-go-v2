@@ -8,6 +8,8 @@ import (
 	"image/png"
 	"os/exec"
 	"testing"
+
+	"go.mau.fi/whatsmeow/proto/waE2E"
 )
 
 // encodePNG builds a simple solid-color PNG of the given size for testing.
@@ -140,3 +142,54 @@ func minimalPDF(t *testing.T) []byte {
 
 // ensure the jpeg encoder import stays referenced even if the helper changes.
 var _ = jpeg.DefaultQuality
+
+func TestMakeJPEGThumbnail_CapsLongestSideOnPortrait(t *testing.T) {
+	src := encodePNG(t, 400, 800)
+
+	thumb := makeJPEGThumbnail(src, 72)
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(thumb))
+	if err != nil {
+		t.Fatalf("thumbnail is not a decodable image: %v", err)
+	}
+	if cfg.Width != 36 || cfg.Height != 72 {
+		t.Fatalf("expected 36x72 (longest side capped), got %dx%d", cfg.Width, cfg.Height)
+	}
+}
+
+func TestApplyImagePresentation_SetsDimensionsAndThumbnail(t *testing.T) {
+	for _, tc := range []struct{ w, h, tw, th int }{
+		{1080, 1920, 40, 72}, // retrato
+		{1200, 600, 72, 36},  // paisagem
+	} {
+		msg := &waE2E.ImageMessage{}
+		applyImagePresentation(msg, encodePNG(t, tc.w, tc.h))
+
+		if msg.GetWidth() != uint32(tc.w) || msg.GetHeight() != uint32(tc.h) {
+			t.Fatalf("expected %dx%d, got %dx%d", tc.w, tc.h, msg.GetWidth(), msg.GetHeight())
+		}
+		cfg, format, err := image.DecodeConfig(bytes.NewReader(msg.GetJPEGThumbnail()))
+		if err != nil || format != "jpeg" {
+			t.Fatalf("expected jpeg thumbnail, got format=%q err=%v", format, err)
+		}
+		if cfg.Width != tc.tw || cfg.Height != tc.th {
+			t.Fatalf("expected thumbnail %dx%d, got %dx%d", tc.tw, tc.th, cfg.Width, cfg.Height)
+		}
+	}
+}
+
+func TestApplyImagePresentation_InvalidImageLeavesFieldsEmpty(t *testing.T) {
+	msg := &waE2E.ImageMessage{}
+	applyImagePresentation(msg, []byte("not an image"))
+	if msg.Width != nil || msg.Height != nil || msg.JPEGThumbnail != nil {
+		t.Fatalf("expected no dimensions/thumbnail for invalid input, got %v", msg)
+	}
+	applyImagePresentation(nil, encodePNG(t, 10, 10)) // nao pode entrar em panico
+}
+
+func TestApplyMediaPresentation_ImageMessageGetsDimensions(t *testing.T) {
+	media := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{}}
+	applyMediaPresentation(media, &MediaStruct{}, encodePNG(t, 300, 500))
+	if media.GetImageMessage().GetWidth() != 300 || media.GetImageMessage().GetHeight() != 500 {
+		t.Fatalf("expected 300x500, got %dx%d", media.GetImageMessage().GetWidth(), media.GetImageMessage().GetHeight())
+	}
+}

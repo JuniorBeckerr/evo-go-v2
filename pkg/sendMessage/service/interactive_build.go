@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"image"
 	"net/http"
 	"os"
 	"os/exec"
@@ -315,8 +316,8 @@ func runWithTimeout(cmd *exec.Cmd, timeout time.Duration) ([]byte, error) {
 	}
 }
 
-// applyMediaPresentation ajusta a apresentacao da midia ja montada: audio de voz x audio comum (campo `ptt`) e
-// miniatura/duracao/dimensoes do video.
+// applyMediaPresentation ajusta a apresentacao da midia ja montada: audio de voz x audio comum (campo `ptt`),
+// dimensoes/miniatura da imagem e miniatura/duracao/dimensoes do video.
 func applyMediaPresentation(media *waE2E.Message, data *MediaStruct, fileData []byte) {
 	if media == nil {
 		return
@@ -325,16 +326,51 @@ func applyMediaPresentation(media *waE2E.Message, data *MediaStruct, fileData []
 		p := buildAudioMessage(audioIsPTT(data), int(a.GetSeconds()))
 		a.PTT, a.Waveform, a.StreamingSidecar = p.PTT, p.Waveform, p.StreamingSidecar
 	}
-	if v := media.GetVideoMessage(); v != nil {
-		info := videoPreview(fileData)
-		if len(info.Thumbnail) > 0 {
-			v.JPEGThumbnail = info.Thumbnail
-		}
-		if info.Seconds > 0 {
-			v.Seconds = proto.Uint32(info.Seconds)
-		}
-		if info.Width > 0 && info.Height > 0 {
-			v.Width, v.Height = proto.Uint32(info.Width), proto.Uint32(info.Height)
-		}
+	applyImagePresentation(media.GetImageMessage(), fileData)
+	applyVideoPresentation(media.GetVideoMessage(), fileData)
+}
+
+// imageThumbnailMaxSide: lado maior da miniatura JPEG embutida na ImageMessage.
+const imageThumbnailMaxSide = 72
+
+// applyImagePresentation preenche Width/Height (tamanho real) e JPEGThumbnail da imagem. Sem as dimensoes o
+// WhatsApp (iOS principalmente) desenha a midia com proporcao padrao, cortada/ampliada, ate baixar o arquivo.
+// Imagem que nao decodifica fica sem esses campos (a mensagem segue sem previa).
+func applyImagePresentation(img *waE2E.ImageMessage, fileData []byte) {
+	if img == nil {
+		return
 	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(fileData))
+	if err != nil || cfg.Width < 1 || cfg.Height < 1 {
+		return
+	}
+	img.Width, img.Height = proto.Uint32(uint32(cfg.Width)), proto.Uint32(uint32(cfg.Height))
+	if thumb := makeJPEGThumbnail(fileData, imageThumbnailMaxSide); len(thumb) > 0 {
+		img.JPEGThumbnail = thumb
+	}
+}
+
+// applyVideoPresentation preenche miniatura, duracao e dimensoes do video (ffprobe/ffmpeg) quando disponiveis.
+func applyVideoPresentation(v *waE2E.VideoMessage, fileData []byte) {
+	if v == nil {
+		return
+	}
+	info := videoPreview(fileData)
+	if len(info.Thumbnail) > 0 {
+		v.JPEGThumbnail = info.Thumbnail
+	}
+	if info.Seconds > 0 {
+		v.Seconds = proto.Uint32(info.Seconds)
+	}
+	if info.Width > 0 && info.Height > 0 {
+		v.Width, v.Height = proto.Uint32(info.Width), proto.Uint32(info.Height)
+	}
+}
+
+// headerImageMimetype: mimetype real da imagem do cabecalho (PNG continua PNG); o resto vai como JPEG.
+func headerImageMimetype(fileData []byte) string {
+	if http.DetectContentType(fileData) == "image/png" {
+		return "image/png"
+	}
+	return "image/jpeg"
 }
